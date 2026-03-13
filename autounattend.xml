@@ -42,6 +42,13 @@
                 <AcceptEula>true</AcceptEula>
                 <FullName>Daan</FullName>
                 <Organization>Home</Organization>
+                <!-- Generieke KMS-installatiesleutel voor Windows 11 Pro -->
+                <!-- Slaat het productsleutel-scherm over tijdens setup     -->
+                <!-- Activeer Windows achteraf met je eigen licentie        -->
+                <ProductKey>
+                    <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
+                    <WillShowUI>Never</WillShowUI>
+                </ProductKey>
             </UserData>
 
             <!-- Schijfindeling: GPT, Disk 0, wist bestaande partities -->
