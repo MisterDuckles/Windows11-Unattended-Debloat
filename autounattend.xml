@@ -28,7 +28,7 @@
             </SetupUILanguage>
             <InputLocale>0413:00020409</InputLocale>  <!-- NL toetsenbordlayout -->
             <SystemLocale>nl-NL</SystemLocale>
-            <UILanguage>nl-NL</UILanguage>
+            <UILanguage>en-US</UILanguage>
             <UserLocale>nl-NL</UserLocale>
         </component>
 
