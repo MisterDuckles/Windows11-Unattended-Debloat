@@ -83,7 +83,10 @@ $appsToRemove = @(
     "Microsoft.OutlookForWindows",
     "Microsoft.Paint",
     "Microsoft.PowerAutomateDesktop",
-    "MicrosoftCorporationII.QuickAssist"
+    "MicrosoftCorporationII.QuickAssist",
+    "Microsoft.StartExperiencesApp",
+    "Microsoft.Xbox.TCUI",
+    "Microsoft.XboxGameCallableUI"
 )
 
 foreach ($app in $appsToRemove) {
@@ -205,10 +208,26 @@ Write-Log "Step 6: creating first-logon Firefox task"
 $firefoxScriptPath = "$env:WINDIR\Setup\Scripts\firefox-firstlogon.ps1"
 $firstLogonScript = @'
 $logPath = "$env:USERPROFILE\debloat-firstlogon.log"
-"$(Get-Date) Firefox install started" | Out-File $logPath -Append
+"$(Get-Date) First-logon script started" | Out-File $logPath -Append
 
+# Remove OneDrive per-user
 try {
-    Start-Process -FilePath "winget" -ArgumentList "install --id Mozilla.Firefox --silent --accept-package-agreements --accept-source-agreements" -Wait -NoNewWindow
+    $odSetup = "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDriveSetup.exe"
+    if (Test-Path $odSetup) {
+        Start-Process -FilePath $odSetup -ArgumentList "/uninstall" -Wait -NoNewWindow
+        "$(Get-Date) OneDrive uninstalled" | Out-File $logPath -Append
+    } else {
+        "$(Get-Date) OneDrive not found, skipping" | Out-File $logPath -Append
+    }
+} catch {
+    "$(Get-Date) OneDrive removal failed: $($_.Exception.Message)" | Out-File $logPath -Append
+}
+
+# Install Firefox via winget (full path — NoProfile sessions exclude WindowsApps from PATH)
+"$(Get-Date) Firefox install started" | Out-File $logPath -Append
+try {
+    $winget = "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe"
+    Start-Process -FilePath $winget -ArgumentList "install --id Mozilla.Firefox --silent --accept-package-agreements --accept-source-agreements" -Wait -NoNewWindow
     "$(Get-Date) Firefox installed" | Out-File $logPath -Append
 } catch {
     "$(Get-Date) Firefox install failed: $($_.Exception.Message)" | Out-File $logPath -Append
