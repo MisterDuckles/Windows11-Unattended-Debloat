@@ -26,7 +26,7 @@
                 <UILanguage>en-US</UILanguage>
                 <WillShowUI>Never</WillShowUI>
             </SetupUILanguage>
-            <InputLocale>0413:00020409</InputLocale>  <!-- NL toetsenbordlayout -->
+            <InputLocale>nl-NL</InputLocale>
             <SystemLocale>nl-NL</SystemLocale>
             <UILanguage>en-US</UILanguage>
             <UserLocale>nl-NL</UserLocale>
@@ -50,7 +50,6 @@
                 <!-- Activeer Windows achteraf met je eigen licentie        -->
                 <ProductKey>
                     <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
-                    <WillShowUI>Never</WillShowUI>
                 </ProductKey>
             </UserData>
 
