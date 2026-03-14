@@ -195,7 +195,9 @@ $edgeTasks = @(
 )
 
 foreach ($task in $edgeTasks) {
-    cmd /c "schtasks /Change /TN \"$task\" /Disable" | Out-Null
+    try {
+        Disable-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
 }
 
 # 6) First-logon task for Firefox install
