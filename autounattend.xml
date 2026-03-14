@@ -21,10 +21,7 @@
                    versionScope="nonSxS"
                    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
             <SetupUILanguage>
-                <!-- Setup-UI taal moet matchen met de ISO (Engels) -->
-                <!-- Anders toont Windows het taal-selectiescherm toch -->
                 <UILanguage>en-US</UILanguage>
-                <WillShowUI>Never</WillShowUI>
             </SetupUILanguage>
             <InputLocale>nl-NL</InputLocale>
             <SystemLocale>nl-NL</SystemLocale>
@@ -45,9 +42,6 @@
                 <AcceptEula>true</AcceptEula>
                 <FullName>Daan</FullName>
                 <Organization>Home</Organization>
-                <!-- Generieke KMS-installatiesleutel voor Windows 11 Pro -->
-                <!-- Slaat het productsleutel-scherm over tijdens setup     -->
-                <!-- Activeer Windows achteraf met je eigen licentie        -->
                 <ProductKey>
                     <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
                 </ProductKey>
@@ -141,7 +135,7 @@
                 <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
                 <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
                 <HideLocalAccountScreen>false</HideLocalAccountScreen>
-                <ProtectYourPC>3</ProtectYourPC>  <!-- Data collection uitgeschakeld -->
+                <ProtectYourPC>3</ProtectYourPC>
                 <UnattendEnableRetailDemo>false</UnattendEnableRetailDemo>
                 <SkipMachineOOBE>true</SkipMachineOOBE>
                 <SkipUserOOBE>true</SkipUserOOBE>
@@ -156,7 +150,6 @@
                         <DisplayName>Daan</DisplayName>
                         <Description>Lokale gebruiker</Description>
                         <Group>Administrators</Group>
-                        <!-- Geen <Password> element = passwordloos account -->
                     </LocalAccount>
                 </LocalAccounts>
             </UserAccounts>
