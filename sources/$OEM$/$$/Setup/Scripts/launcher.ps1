@@ -5,7 +5,6 @@
 # Valt terug op de lokale kopie als er geen internet is.
 # =============================================================================
 
-$LogFile = "$env:WINDIR\Panther\debloat.log"
 $LocalScript = "$env:WINDIR\Setup\Scripts\debloat.ps1"
 $TempScript = "$env:ProgramData\debloat-remote.ps1"
 
@@ -16,13 +15,9 @@ $RemoteUrl = "https://raw.githubusercontent.com/MisterDuckles/Windows11Debloater
 function Write-Log {
     param([string]$Message)
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "$timestamp  $Message" | Out-File -FilePath $LogFile -Append -Encoding UTF8
+    # Schrijf alleen naar stdout; SetupComplete.cmd logt dit automatisch naar debloat.log
     Write-Host "$timestamp  $Message"
 }
-
-try {
-    New-Item -Path (Split-Path $LogFile -Parent) -ItemType Directory -Force | Out-Null
-} catch {}
 
 Write-Log "=== Debloat Launcher gestart ==="
 Write-Log "Lokaal script: $LocalScript"
@@ -63,7 +58,8 @@ if (-not $scriptPathToRun) {
 # ── Stap 3: Script uitvoeren ───────────────────────────────────────────────
 Write-Log "Script uitvoering gestart: $scriptPathToRun"
 try {
-    powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -File "$scriptPathToRun" *>> $LogFile
+    # Omdat SetupComplete.cmd al stdout logt, hoeven we niet extra te redirecten
+    & powershell.exe -ExecutionPolicy Bypass -NoProfile -NonInteractive -File "$scriptPathToRun"
     if ($LASTEXITCODE -ne 0) {
         Write-Log "FOUT: script faalde met exitcode $LASTEXITCODE"
         exit $LASTEXITCODE
