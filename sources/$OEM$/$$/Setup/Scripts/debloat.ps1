@@ -1,12 +1,10 @@
 # debloat.ps1 - Windows 11 debloat script
 # Runs as SYSTEM from launcher.ps1.
 
-$LogFile = "$env:WINDIR\Panther\debloat.log"
-
 function Write-Log {
     param([string]$Message)
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "$timestamp  $Message" | Out-File -FilePath $LogFile -Append -Encoding UTF8
+    Write-Host "$timestamp  $Message"
 }
 
 function Set-RegValue {
@@ -78,7 +76,14 @@ $appsToRemove = @(
     "king.com.CandyCrushFriends",
     "Amazon.com.Amazon",
     "Facebook.Facebook",
-    "Netflix.Netflix"
+    "Netflix.Netflix",
+    "Microsoft.BingSearch",
+    "Microsoft.Tips",
+    "Microsoft.Todos",
+    "Microsoft.OutlookForWindows",
+    "Microsoft.Paint",
+    "Microsoft.PowerAutomateDesktop",
+    "MicrosoftCorporationII.QuickAssist"
 )
 
 foreach ($app in $appsToRemove) {
@@ -222,8 +227,9 @@ try {
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File `"$firefoxScriptPath`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    $principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
 
-    Register-ScheduledTask -TaskName "Debloat-Firefox-FirstLogon" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
+    Register-ScheduledTask -TaskName "Debloat-Firefox-FirstLogon" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
     Write-Log "Created task: Debloat-Firefox-FirstLogon"
 } catch {
     Write-Log "WARN: failed creating first-logon task - $($_.Exception.Message)"
