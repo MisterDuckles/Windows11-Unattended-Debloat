@@ -9,7 +9,7 @@ $LocalScript = "$env:WINDIR\Setup\Scripts\debloat.ps1"
 $TempScript = "$env:ProgramData\debloat-remote.ps1"
 
 # ── Pas deze URL aan naar jouw eigen GitHub raw URL ──────────────────────────
-$RemoteUrl = "https://raw.githubusercontent.com/MisterDuckles/Windows11Debloater/refs/heads/main/debloat.ps1?token=GHSAT0AAAAAADW4XDNX63NLL2LMQF52SMFI2NR2WKQ"
+$RemoteUrl = "https://raw.githubusercontent.com/MisterDuckles/Windows11-Unattended-Debloat/refs/heads/master/sources/%24OEM%24/%24%24/Setup/Scripts/debloat.ps1?token=GHSAT0AAAAAADW4XDNWFOT2PJIV4SGZFCDE2NVIWGQ"
 # ─────────────────────────────────────────────────────────────────────────────
 
 function Write-Log {
