@@ -86,7 +86,8 @@ $appsToRemove = @(
     "MicrosoftCorporationII.QuickAssist",
     "Microsoft.StartExperiencesApp",
     "Microsoft.Xbox.TCUI",
-    "Microsoft.XboxGameCallableUI"
+    "Microsoft.XboxGameCallableUI",
+    "Microsoft.WindowsAppRuntime.Main"
 )
 
 foreach ($app in $appsToRemove) {
@@ -203,9 +204,9 @@ foreach ($task in $edgeTasks) {
     } catch {}
 }
 
-# 6) First-logon task for Firefox install
-Write-Log "Step 6: creating first-logon Firefox task"
-$firefoxScriptPath = "$env:WINDIR\Setup\Scripts\firefox-firstlogon.ps1"
+# 6) First-logon task
+Write-Log "Step 6: creating first-logon task"
+$firstLogonScriptPath = "$env:WINDIR\Setup\Scripts\firstlogon.ps1"
 $firstLogonScript = @'
 $logPath = "$env:USERPROFILE\debloat-firstlogon.log"
 "$(Get-Date) First-logon script started" | Out-File $logPath -Append
@@ -223,35 +224,20 @@ try {
     "$(Get-Date) OneDrive removal failed: $($_.Exception.Message)" | Out-File $logPath -Append
 }
 
-# Install Firefox via winget (full path — NoProfile sessions exclude WindowsApps from PATH)
-"$(Get-Date) Firefox install started" | Out-File $logPath -Append
-try {
-    $winget = "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe"
-    Start-Process -FilePath $winget -ArgumentList "install --id Mozilla.Firefox --silent --accept-package-agreements --accept-source-agreements" -Wait -NoNewWindow
-    "$(Get-Date) Firefox installed" | Out-File $logPath -Append
-} catch {
-    "$(Get-Date) Firefox install failed: $($_.Exception.Message)" | Out-File $logPath -Append
-}
-
-try {
-    Start-Process "ms-settings:defaultapps" | Out-Null
-    "$(Get-Date) Opened default apps page" | Out-File $logPath -Append
-} catch {}
-
-Unregister-ScheduledTask -TaskName "Debloat-Firefox-FirstLogon" -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "Debloat-FirstLogon" -Confirm:$false -ErrorAction SilentlyContinue
 "$(Get-Date) First-logon task removed" | Out-File $logPath -Append
 '@
 
-$firstLogonScript | Out-File -FilePath $firefoxScriptPath -Encoding UTF8 -Force
+$firstLogonScript | Out-File -FilePath $firstLogonScriptPath -Encoding UTF8 -Force
 
 try {
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File `"$firefoxScriptPath`""
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File `"$firstLogonScriptPath`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
 
-    Register-ScheduledTask -TaskName "Debloat-Firefox-FirstLogon" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-    Write-Log "Created task: Debloat-Firefox-FirstLogon"
+    Register-ScheduledTask -TaskName "Debloat-FirstLogon" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+    Write-Log "Created task: Debloat-FirstLogon"
 } catch {
     Write-Log "WARN: failed creating first-logon task - $($_.Exception.Message)"
 }
