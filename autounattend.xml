@@ -141,18 +141,6 @@
                 <SkipUserOOBE>true</SkipUserOOBE>
             </OOBE>
 
-            <!-- Lokale gebruiker aanmaken zonder wachtwoord -->
-            <!-- Pas <Name> en <DisplayName> aan naar gewenste gebruikersnaam -->
-            <UserAccounts>
-                <LocalAccounts>
-                    <LocalAccount wcm:action="add">
-                        <Name>Daan</Name>
-                        <DisplayName>Daan</DisplayName>
-                        <Description>Lokale gebruiker</Description>
-                        <Group>Administrators</Group>
-                    </LocalAccount>
-                </LocalAccounts>
-            </UserAccounts>
 
             <!-- Tijdzone -->
             <TimeZone>W. Europe Standard Time</TimeZone>

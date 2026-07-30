@@ -224,6 +224,35 @@ try {
     "$(Get-Date) OneDrive removal failed: $($_.Exception.Message)" | Out-File $logPath -Append
 }
 
+# Install Firefox via Winget
+try {
+    "$(Get-Date) Installing Firefox via Winget..." | Out-File $logPath -Append
+    $wingetResult = winget install --id Mozilla.Firefox -e --silent --accept-source-agreements --accept-package-agreements 2>&1
+    "$(Get-Date) Firefox installation finished: $wingetResult" | Out-File $logPath -Append
+} catch {
+    "$(Get-Date) Firefox installation failed: $($_.Exception.Message)" | Out-File $logPath -Append
+}
+
+# Create Public Desktop Shortcuts
+try {
+    "$(Get-Date) Creating Public Desktop shortcuts..." | Out-File $logPath -Append
+    $publicDesktop = "$env:PUBLIC\Desktop"
+
+    # SetupToolbox.url
+    $toolboxShortcutPath = "$publicDesktop\SetupToolbox.url"
+    $toolboxContent = "[InternetShortcut]`r`nURL=https://github.com/MisterDuckles/SetupToolbox"
+    Set-Content -Path $toolboxShortcutPath -Value $toolboxContent -Encoding UTF8
+    "$(Get-Date) SetupToolbox.url created" | Out-File $logPath -Append
+
+    # Windows Activeren (MAS).cmd
+    $masShortcutPath = "$publicDesktop\Windows Activeren (MAS).cmd"
+    $masContent = "@echo off`r`npowershell -Command `"irm https://get.activated.win | iex`""
+    Set-Content -Path $masShortcutPath -Value $masContent -Encoding ASCII
+    "$(Get-Date) Windows Activeren (MAS).cmd created" | Out-File $logPath -Append
+} catch {
+    "$(Get-Date) Creating shortcuts failed: $($_.Exception.Message)" | Out-File $logPath -Append
+}
+
 Unregister-ScheduledTask -TaskName "Debloat-FirstLogon" -Confirm:$false -ErrorAction SilentlyContinue
 "$(Get-Date) First-logon task removed" | Out-File $logPath -Append
 '@
