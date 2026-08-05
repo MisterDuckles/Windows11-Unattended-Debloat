@@ -1,8 +1,8 @@
 # PROGRESS_REPORT: Windows 11 Unattended Setup
 
 ## Huidige Status
-- **Status:** ISO Builder geautomatiseerd
-- **Laatst bijgewerkt:** 2026-07-30
+- **Status:** Fase 3 updates doorgevoerd (OOBE Update Bypass, Toetsenbordtaal & Taskbar Debloat)
+- **Laatst bijgewerkt:** 2026-08-05
 - **Actieve Agent:** Roo Code (Lokale AI)
 
 ---
@@ -12,6 +12,8 @@
 - `autounattend.xml` aangepast voor US-English ISO met US-International layout (0409:00020409)
 - OOBE stopt voor een handmatig lokaal account (SkipUserOOBE = false)
 - HideSecurityQuestionsFromLocalUsers is geactiveerd in debloat.ps1
+- `DisableOOBEUpdate = 1` ingesteld in `debloat.ps1` om de OOBE update check over te slaan
+- `firstlogon.ps1` forceert nu de toetsenbordtaal naar enkel US-International (`0409:00020409`) en unpint de Microsoft Store van de taakbalk
 
 ---
 

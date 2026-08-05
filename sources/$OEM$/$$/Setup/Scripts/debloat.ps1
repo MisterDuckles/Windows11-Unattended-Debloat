@@ -158,6 +158,7 @@ Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" "D
 Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\wlidsvc" "Start" 4
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting" "Disabled" 1
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "HideSecurityQuestionsFromLocalUsers" 1
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" "DisableOOBEUpdate" 1
 
 foreach ($serviceName in @("DiagTrack", "dmwappushservice", "wlidsvc", "WerSvc")) {
     try {
@@ -252,6 +253,28 @@ try {
     "$(Get-Date) Windows Activeren (MAS).cmd created" | Out-File $logPath -Append
 } catch {
     "$(Get-Date) Creating shortcuts failed: $($_.Exception.Message)" | Out-File $logPath -Append
+}
+
+# Force single language list with US-International layout only
+try {
+    "$(Get-Date) Setting single US-International keyboard layout..." | Out-File $logPath -Append
+    $langList = New-WinUserLanguageList -Language "en-US"
+    $langList[0].InputMethodTips.Clear()
+    $langList[0].InputMethodTips.Add("0409:00020409")
+    Set-WinUserLanguageList -LanguageList $langList -Force
+    "$(Get-Date) Keyboard layout updated to US-International only" | Out-File $logPath -Append
+} catch {
+    "$(Get-Date) Keyboard layout update failed: $($_.Exception.Message)" | Out-File $logPath -Append
+}
+
+# Remove pinned Microsoft Store shortcut from taskbar
+try {
+    "$(Get-Date) Unpinning Microsoft Store from taskbar..." | Out-File $logPath -Append
+    $taskbarPath = "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
+    Get-ChildItem -Path $taskbarPath -Filter "*Store*" -ErrorAction SilentlyContinue | Remove-Item -Force
+    "$(Get-Date) Microsoft Store unpinned" | Out-File $logPath -Append
+} catch {
+    "$(Get-Date) Unpinning MS Store failed: $($_.Exception.Message)" | Out-File $logPath -Append
 }
 
 Unregister-ScheduledTask -TaskName "Debloat-FirstLogon" -Confirm:$false -ErrorAction SilentlyContinue

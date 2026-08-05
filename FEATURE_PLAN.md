@@ -1,75 +1,103 @@
-# FEATURE_PLAN: Generieke OOBE Setup met US-International Layout & Geen Beveiligingsvragen
+# FEATURE_PLAN: Afronding Fase 3 (Bing Search & Reclame Blocking)
 
-**Doel:** De Windows 11 installatie volledig geautomatiseerd laten verlopen (US-International toetsenbord, geen taalkeuzeschermen), waarna Setup stopt bij het lokale account-scherm zonder de verplichte 3 beveiligingsvragen af te dwingen bij het instellen van een wachtwoord.
+**Doel:** De overgebleven relevante punten van Fase 3 (Bing Web Search in het Startmenu uitschakelen en Startmenu reclame/aanbevelingen blokkeren) geautomatiseerd toevoegen aan `debloat.ps1`. Het klassieke contextmenu is geschrapt en Hibernation (sluimerstand) blijft ingeschakeld.
 
 ---
 
-## Task 1: Beveiligingsvragen Uitschakelen via Register
-- **Bestand:** `sources/$OEM$/$$/Setup/Scripts/debloat.ps1`
-- **Aanbevolen Roo Mode:** `Code`
-- **Aanbevolen Provider:** `Ollama - Heavy (qwen3-coder:30b)`
+## Component Analyse & XML Status
+
+* **`autounattend.xml`:** Geen wijzigingen vereist. Partitionering, taalinstellingen en OOBE-bypasses zijn reeds volledig in orde. Registeraanpassingen behoren thuis in `debloat.ps1`.
+* **Hibernation:** Blijft ongewijzigd actief (geen `powercfg /h off`).
+* **Contextmenu:** Geen aanpassingen (Windows 11 standaard blijft behouden).
+
+---
+
+## Task 1: Bing Search in Startmenu Uitschakelen
+
+* **Bestand:** `sources/$OEM$/$$/Setup/Scripts/debloat.ps1`
+* **Target Mode:** `Code`
+* **Target Provider Profile:** `Ollama - Heavy (30b)`
+* **Fallback Rule:** Schakel bij een timeout of streamfout voor deze taak direct om naar `Gemini 3.1 Pro`.
 
 ### Sub-prompt voor Roo Code:
-Lees het bestand `sources/$OEM$/$$/Setup/Scripts/debloat.ps1`.
 
-Voeg in Stap 3 (privacy and telemetry hardening) de volgende registerinstelling toe met de Set-RegValue helper-functie om de verplichte 3 beveiligingsvragen bij het instellen van een lokaal account-wachtwoord uit te schakelen:
+Lees het bestand `sources/$OEM$/$$/Setup/Scripts/debloat.ps1` via `read_file`.
+Zoek het anker: `# 3) Privacy and telemetry hardening`
+Voeg direct onder de al bestaande `Set-RegValue` regels rond regel 137 de volgende register-instellingen toe via `apply_diff`:
 
-Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "HideSecurityQuestionsFromLocalUsers" 1
+```powershell
+# Disable Bing Web Search in Start Menu
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "DisableWebSearch" 1
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchUseWeb" 0
+
+```
 
 Sla het bestand op.
 
 **Acceptatiecriteria:**
-- [ ] De policy `HideSecurityQuestionsFromLocalUsers` is correct toegevoegd aan `debloat.ps1`.
+
+* [ ] Registerwaarden voor het uitschakelen van Bing Search in de zoekbalk/Startmenu zijn toegevoegd onder sectie 3.
 
 ---
 
-## Task 2: XML Geen UserOOBE & US-International Layout
-- **Bestand:** `autounattend.xml`
-- **Aanbevolen Roo Mode:** `Code`
-- **Aanbevolen Provider:** `Ollama - Heavy (qwen3-coder:30b)`
+## Task 2: Reclame & Aanbevelingen in Startmenu Blokkeren
+
+* **Bestand:** `sources/$OEM$/$$/Setup/Scripts/debloat.ps1`
+* **Target Mode:** `Code`
+* **Target Provider Profile:** `Ollama - Heavy (30b)`
+* **Fallback Rule:** Schakel bij een timeout of streamfout voor deze taak direct om naar `Gemini 3.1 Pro`.
 
 ### Sub-prompt voor Roo Code:
-Lees het bestand `autounattend.xml`.
 
-Pas de XML aan om de WinPE-taal, toetsenbordindeling en OOBE-pauze correct in te stellen:
+Lees het bestand `sources/$OEM$/$$/Setup/Scripts/debloat.ps1` via `read_file`.
+Zoek het anker: `# 3) Privacy and telemetry hardening`
+Voeg direct onder de Bing Search register-instellingen die zojuist zijn toegevoegd de volgende code toe via `apply_diff`:
 
-1. In de windowsPE pass (Microsoft-Windows-International-Core-WinPE):
-   - Zet <UILanguage> en <SetupUILanguage><UILanguage> op en-US.
-   - Voeg <WillShowUI>OnError</WillShowUI> toe binnen <SetupUILanguage>.
-   - Zet <InputLocale> op 0409:00020409 (US-International).
+```powershell
+# Disable Start Menu Ads, Sponsored Apps & Consumer Recommendations
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableThirdPartySuggestions" 1
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableWindowsSpotlightFeatures" 1
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableTailoredExperiencesWithWindows" 1
 
-2. In de oobeSystem pass (Microsoft-Windows-International-Core):
-   - Zet <InputLocale> op 0409:00020409.
-   - Zet <UILanguage> op en-US.
+```
 
-3. In de oobeSystem pass (Microsoft-Windows-Shell-Setup -> <OOBE>):
-   - Zet <SkipUserOOBE>false</SkipUserOOBE> (zorgt dat Windows pauzeert voor een lokaal account).
-   - Zet <HideLocalAccountScreen>false</HideLocalAccountScreen>.
-   - Zet <HideOnlineAccountScreens>true</HideOnlineAccountScreens> (voorkomt de verplichting van een Microsoft Account).
-   - Controleer dat er GEEN <UserAccounts> of <AutoLogon> secties aanwezig zijn.
-
-Sla de wijzigingen op in autounattend.xml.
+Sla het bestand op.
 
 **Acceptatiecriteria:**
-- [ ] Taalschermen verschijnen niet meer tijdens de WinPE-fase.
-- [ ] `InputLocale` is in beide passes hardcoded ingesteld op `0409:00020409`.
-- [ ] Setup stopt bij het aanmaken van een lokaal account zonder Microsoft Account-dwang.
+
+* [ ] Registerwaarden voor het uitschakelen van gesponsorde content en suggesties in het Startmenu zijn toegevoegd.
 
 ---
 
 ## Task 3: Voortgangsrapportage & Roadmap Bijwerken
-- **Bestanden:** `PROGRESS_REPORT.md` en `ROADMAP.md`
-- **Aanbevolen Roo Mode:** `Code`
-- **Aanbevolen Provider:** `Ollama - Fast (qwen3.5:9b)`
+
+* **Bestanden:** `PROGRESS_REPORT.md` en `ROADMAP.md`
+* **Target Mode:** `Code`
+* **Target Provider Profile:** `Ollama - Fast (9b)`
+* **Fallback Rule:** Schakel bij een timeout of streamfout voor deze taak direct om naar `Gemini 3.1 Pro`.
 
 ### Sub-prompt voor Roo Code:
-Lees en werk de bestanden `PROGRESS_REPORT.md` en `ROADMAP.md` bij.
 
-1. In PROGRESS_REPORT.md: Noteer dat autounattend.xml is aangepast voor de US-English ISO met US-International layout (0409:00020409). Vermeld dat OOBE stopt voor een handmatig lokaal account (SkipUserOOBE = false) en dat HideSecurityQuestionsFromLocalUsers is geactiveerd in debloat.ps1.
-2. In ROADMAP.md: Vink de taak "Generieke XML / Lokaal account" af onder Fase 1 ([x]).
+Lees en werk de bestanden `PROGRESS_REPORT.md` en `ROADMAP.md` bij via `read_file` en `apply_diff`.
+
+1. In `PROGRESS_REPORT.md`:
+* Noteer onder **Aanpassingen** dat Bing Search in het Startmenu en reclame/gesponsorde suggesties definitief zijn uitgeschakeld via `debloat.ps1`.
+* Vermeld dat Fase 3 hiermee afgerond is (Hibernation behouden, Contextmenu overgeslagen).
+
+
+2. In `ROADMAP.md`:
+* Werk sectie **Fase 3: Windows Tweaks, OOBE Clean-up & Taskbar** bij:
+* Zet `Bing Search & Startmenu` en `Reclame uitschakelen` op voltooid (`[x]`).
+* Schrap de regels voor Contextmenu en Power & Space/Hibernation of markeer ze als overgeslagen/afgerond.
+
+
+
+
 
 Sla beide bestanden op.
 
 **Acceptatiecriteria:**
-- [ ] `PROGRESS_REPORT.md` bevat de actuele status en genomen stappen.
-- [ ] `ROADMAP.md` is bijgewerkt.
+
+* [ ] `PROGRESS_REPORT.md` bevat de actuele status en afronding van Fase 3.
+* [ ] `ROADMAP.md` is bijgewerkt en klaar voor Fase 4 (ISO Creatie & VMware Testing).

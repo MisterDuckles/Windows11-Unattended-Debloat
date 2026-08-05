@@ -1,30 +1,38 @@
 # AGENTIC WORKFLOW & HANDOFF RULES
 
-Je bent onderdeel van een hybride, staatloze Vibe-Coding keten. 
-Jouw taak is het uitvoeren van code-aanpassingen, het draaien van tests en het beheren van de projectstatus via Markdown-bestanden.
+You are part of a hybrid, stateless Vibe-Coding chain.
+Your task is to execute code changes, run tests, and manage project status via Markdown files.
 
-## 📋 VASTE WERKWIJZE
-1. LEES ALTIJD EERST: `ROADMAP.md`, `FEATURE_PLAN.md` en `PROGRESS_REPORT.md`.
-2. Bepaal waar de vorige AI is gebleven op basis van `PROGRESS_REPORT.md`.
-3. Voer de openstaande taak uit. Maak bestanden aan, pas code aan of run terminal-commando's indien nodig.
+## 📋 STANDARD WORKFLOW
 
-## ⚠️ DE 3-STRIKES REGEL (FOUTAFHANDELING)
-- Je mag maximaal 3 pogingen doen om dezelfde foutmelding of bug te herstellen.
-- Na 3 mislukte pogingen STOP je direct met code aanpassen.
-- Schrijf een helder Handoff Report in `PROGRESS_REPORT.md` met:
-  1. De exacte foutmelding.
-  2. Wat je al hebt geprobeerd (en waarom het mislukte).
-  3. Welke AI deze taak moet overnemen (bijv. "Escalatie naar Copilot/Antigravity").
+1. ALWAYS READ FIRST: `ROADMAP.md`, `FEATURE_PLAN.md`, and `PROGRESS_REPORT.md`.
+2. Determine where the previous AI left off based on `PROGRESS_REPORT.md`.
+3. Execute the pending task. Create files, modify code, or run terminal commands as necessary.
 
-## 🔄 HANDOFF & TERUGKEER-LOOP
-- Ben jij een hogere-laag AI (Copilot / Antigravity) en heb je een bug succesvol opgelost?
-- Update `PROGRESS_REPORT.md` met de oplossing en vermeld expliciet: 
-  > "FIX VOLTOOID. Status overgedragen TERUG naar Lokale AI voor volgende taak."
+## ⚠️ THE 3-STRIKES RULE (ERROR HANDLING)
 
-## 📜 REGELS VOOR HET PLAN & DE USER
-- Volg `FEATURE_PLAN.md`. Als je ziet dat een aanpak tot problemen leidt (bijv. WinUI memory leaks), MOGER JE AFWIJKEN van het plan.
-- Verplicht bij afwijking: Leg in begrijpelijke mensentaal aan de gebruiker uit WAAROM je afwijkt en vraag om akkoord.
-- Zodra een feature volledig is afgerond en alle acceptatiecriteria zijn gehaald:
-  - Update `ROADMAP.md` (zet de feature op `[x] Voltooid`).
-  - Update `FEATURE_PLAN.md` (werk de acceptatie criteria bij als deze zijn gehaald)
-  - Schoon `PROGRESS_REPORT.md` op voor de volgende feature.
+* You may make a maximum of 3 attempts to fix the same error message or bug.
+* After 3 failed attempts, STOP modifying code immediately.
+* Write a clear Handoff Report in `PROGRESS_REPORT.md` including:
+1. The exact error message.
+2. What you have already tried (and why it failed).
+3. Which AI should take over this task (e.g., "Escalation to Copilot/Antigravity").
+
+
+
+## 🔄 HANDOFF & RETURN LOOP
+
+* If you are a higher-tier AI (Copilot / Antigravity) and have successfully resolved a bug:
+* Update `PROGRESS_REPORT.md` with the solution and explicitly state:
+> "FIX COMPLETED. Status transferred BACK to Local AI for the next task."
+
+
+
+## 📜 RULES FOR THE PLAN & THE USER
+
+* Follow `FEATURE_PLAN.md`. If you notice that an approach leads to issues (e.g., WinUI memory leaks), YOU ARE PERMITTED TO DEVIATE from the plan.
+* Mandatory upon deviation: Explain to the user in plain language WHY you are deviating and ask for approval.
+* As soon as a feature is fully completed and all acceptance criteria are met:
+* Update `ROADMAP.md` (mark the feature as `[x] Completed`).
+* Update `FEATURE_PLAN.md` (update acceptance criteria once met).
+* Clean up `PROGRESS_REPORT.md` for the next feature.
