@@ -13,16 +13,16 @@
 
 .PARAMETER OutputIso
     Pad voor de nieuwe ISO.
-    Standaard: .\Windows11_25H2_Unattended_Debloat.iso
+    Standaard: C:\Users\Gebruiker\Downloads\Win11_Custom.iso
 #>
 
 [CmdletBinding()]
 param (
     [Parameter(Mandatory = $false)]
-    [string]$SourceIso = "C:\Users\Gebruiker\Downloads\Win11_25H2_EnglishInternational_x64.iso",
+    [string]$SourceIso = "C:\Users\Gebruiker\Downloads\Win11_25H2_EnglishInternational_x64_v2.iso",
 
     [Parameter(Mandatory = $false)]
-    [string]$OutputIso = ".\Windows11_25H2_Unattended_Debloat.iso"
+    [string]$OutputIso = "C:\Users\Gebruiker\Downloads\Win11_Custom.iso"
 )
 
 # Visual styling helpers
@@ -200,7 +200,14 @@ try {
     
     $etfsboot = Join-Path $tempFolder "boot\etfsboot.com"
     $efisys = Join-Path $tempFolder "efi\microsoft\boot\efisys.bin"
-    $fullOutputPath = [System.IO.Path]::GetFullPath((Join-Path $scriptRoot $OutputIso))
+
+    # Robuuste afhandeling van absolute vs relatieve paden
+    $cleanOutputIso = $OutputIso.Trim('"').Trim("'")
+    if ([System.IO.Path]::IsPathRooted($cleanOutputIso)) {
+        $fullOutputPath = [System.IO.Path]::GetFullPath($cleanOutputIso)
+    } else {
+        $fullOutputPath = [System.IO.Path]::GetFullPath((Join-Path $scriptRoot $cleanOutputIso))
+    }
 
     # Oscdimg parameters voor UEFI/BIOS bootable ISO
     $oscdimgArgs = @(

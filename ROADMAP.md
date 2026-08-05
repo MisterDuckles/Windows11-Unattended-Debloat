@@ -3,7 +3,7 @@
 ## Fase 1: Basis & Generieke Unattend (Huidige Focus)
 - [x] Base Unattend XML opzetten (Nederlands, Disk 0 Wipe, EULA acceptatie)
 - [x] Basic AppX Debloat (Copilot, Xbox, Consumentenapps)
-- [ ] **Generieke XML:** Hardcoded gebruiker ('Daan') verwijderen, `<HideLocalAccountScreen>false</HideLocalAccountScreen>` behouden voor lokaal account.
+- [x] **Generieke XML:** Hardcoded gebruiker ('Daan') verwijderen, `<HideLocalAccountScreen>false</HideLocalAccountScreen>` behouden voor lokaal account.
 
 ## Fase 2: Post-Install & Software Automation
 - [x] **Winget Firefox:** Automatische achtergrondinstallatie van Firefox bij de eerste inlog via `firstlogon.ps1`.

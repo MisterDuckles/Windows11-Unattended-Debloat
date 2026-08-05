@@ -7,6 +7,14 @@
 
 ---
 
+## Aanpassingen
+
+- `autounattend.xml` aangepast voor US-English ISO met US-International layout (0409:00020409)
+- OOBE stopt voor een handmatig lokaal account (SkipUserOOBE = false)
+- HideSecurityQuestionsFromLocalUsers is geactiveerd in debloat.ps1
+
+---
+
 ## Takenoverzicht
 - [x] Basis repository structuur (`autounattend.xml`, `debloat.ps1`, `launcher.ps1`)
 - [x] Task 1.1: XML Generiek maken (User 'Daan' verwijderen)

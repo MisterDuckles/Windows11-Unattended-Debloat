@@ -157,6 +157,7 @@ Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds" "EnableFe
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" "DODownloadMode" 99
 Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\wlidsvc" "Start" 4
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting" "Disabled" 1
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "HideSecurityQuestionsFromLocalUsers" 1
 
 foreach ($serviceName in @("DiagTrack", "dmwappushservice", "wlidsvc", "WerSvc")) {
     try {
