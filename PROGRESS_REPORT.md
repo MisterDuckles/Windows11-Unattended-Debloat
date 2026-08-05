@@ -14,6 +14,9 @@
 - HideSecurityQuestionsFromLocalUsers is geactiveerd in debloat.ps1
 - `DisableOOBEUpdate = 1` ingesteld in `debloat.ps1` om de OOBE update check over te slaan
 - `firstlogon.ps1` forceert nu de toetsenbordtaal naar enkel US-International (`0409:00020409`) en unpint de Microsoft Store van de taakbalk
+- Bing Search in het Startmenu en reclame/gesponsorde suggesties definitief uitgeschakeld via `debloat.ps1`.
+- Fase 3 afgerond (Hibernation behouden, Contextmenu overgeslagen).
+
 
 ---
 

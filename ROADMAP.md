@@ -15,9 +15,10 @@
 - [x] **OOBE Update Bypass:** OOBE Windows Update scherm ("Getting the latest features and security updates") uitschakelen via het register (`DisableOOBEUpdate`).
 - [x] **Taal- & Toetsenbord Opschonen:** Dubbele toetsenbordtaal (ENG/NLD) op het bureaublad verwijderen en dwingen tot enkel US-International in `firstlogon.ps1`.
 - [x] **Taskbar Debloat:** Microsoft Store icoon automatisch ontkoppelen van de taakbalk.
-- [ ] **Bing Search & Startmenu:** Web-zoekresultaten in het Startmenu uitschakelen via het register.
-- [ ] **Power & Space:** Hibernation (Sluimerstand) uitschakelen (`powercfg /h off`) om gigabytes aan schijfruimte te besparen.
-- [ ] **Reclame uitschakelen:** "Aanbevolen" en gesponsorde apps in het Startmenu blokkeren.
+- [x] **Bing Search & Startmenu:** Web-zoekresultaten in het Startmenu uitgeschakeld via het register (`DisableSearchBoxSuggestions` + CloudContent settings) — toegepast in `debloat.ps1`.
+- [x] **Reclame uitschakelen:** "Aanbevolen" en gesponsorde suggesties in het Startmenu geblokkeerd via CloudContent policies — toegepast in `debloat.ps1`.
+- [ ] **Power & Space:** Hibernation behouden (overgeslagen) — geen `powercfg /h off` toegepast.
+- [ ] **Contextmenu:** Aanpassingen overgeslagen.
 
 ## Fase 4: ISO Creatie & VMware Testing
 - [x] **ISO Build Helper:** Volledig geautomatiseerd script (`build-helper.ps1`) voor ISO generatie.
