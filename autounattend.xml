@@ -1,156 +1,193 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    autounattend.xml — Windows 11 25H2 Unattended Debloat Setup
-    Regio: Nederland (EEA — DMA Edge-verwijdering actief)
+<!-- 
+    autounattend.xml
+    Windows 11 25H2 Unattended Debloat Setup
+    Regio: Nederland (EEA / DMA Edge-verwijdering actief)
     Schijf: installeert op Disk 0, wist alle bestaande partities
     Editie: Windows 11 Pro (geconfigureerd op naam voor NTLite / Custom ISO compatibiliteit)
 -->
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
-<!-- ════════════════════════════════════════════════════════════════════
-      PASS 1: windowsPE — schijfindeling, image-selectie, regionale instellingen
-      ════════════════════════════════════════════════════════════════════ -->
-<settings pass="windowsPE">
-
-    <!-- Regionale instellingen en invoer tijdens setup -->
-    <component name="Microsoft-Windows-International-Core-WinPE"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-        <SetupUILanguage>
-            <WillShowUI>OnError</WillShowUI>
+    <!-- 
+        PASS 1: windowsPE - schijfindeling, image-selectie, regionale instellingen
+    -->
+    <settings pass="windowsPE">
+        <!-- Regionale instellingen en invoer tijdens setup -->
+        <component name="Microsoft-Windows-International-Core-WinPE"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS"
+                   xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+            <SetupUILanguage>
+                <WillShowUI>OnError</WillShowUI>
+                <UILanguage>en-GB</UILanguage>
+            </SetupUILanguage>
+            <InputLocale>0409:00020409</InputLocale>
+            <SystemLocale>nl-NL</SystemLocale>
             <UILanguage>en-GB</UILanguage>
-        </SetupUILanguage>
-        <InputLocale>0409:00020409</InputLocale>
-        <SystemLocale>nl-NL</SystemLocale>
-        <UILanguage>en-GB</UILanguage>
-        <UserLocale>nl-NL</UserLocale>
-    </component>
+            <UserLocale>nl-NL</UserLocale>
+        </component>
 
-    <!-- Schijfindeling en image-selectie -->
-    <component name="Microsoft-Windows-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+        <!-- Schijfindeling en image-selectie -->
+        <component name="Microsoft-Windows-Setup"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS"
+                   xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+            <!-- EULA accepteren -->
+            <UserData>
+                <AcceptEula>true</AcceptEula>
+                <FullName>User</FullName>
+                <Organization>Home</Organization>
+                <ProductKey>
+                    <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
+                </ProductKey>
+            </UserData>
 
-        <!-- EULA accepteren -->
-        <UserData>
-            <AcceptEula>true</AcceptEula>
-            <FullName>User</FullName>
-            <Organization>Home</Organization>
-            <ProductKey>
-                <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
-            </ProductKey>
-        </UserData>
-
-        <!-- Schijfindeling: GPT, Disk 0, wist bestaande partities -->
-        <DiskConfiguration>
-            <Disk wcm:action="add">
-                <DiskID>0</DiskID>
-                <WillWipeDisk>true</WillWipeDisk>
-                <CreatePartitions>
-                    <!-- EFI System Partition -->
-                    <CreatePartition wcm:action="add">
-                        <Order>1</Order>
-                        <Type>EFI</Type>
-                        <Size>100</Size>
-                    </CreatePartition>
-                    <!-- Microsoft Reserved Partition -->
-                    <CreatePartition wcm:action="add">
-                        <Order>2</Order>
-                        <Type>MSR</Type>
-                        <Size>16</Size>
-                    </CreatePartition>
-                    <!-- Windows partitie — rest van de schijf -->
-                    <CreatePartition wcm:action="add">
-                        <Order>3</Order>
-                        <Type>Primary</Type>
-                        <Extend>true</Extend>
-                    </CreatePartition>
-                </CreatePartitions>
-                <ModifyPartitions>
-                    <ModifyPartition wcm:action="add">
-                        <Order>1</Order>
-                        <PartitionID>1</PartitionID>
-                        <Label>System</Label>
-                        <Format>FAT32</Format>
-                    </ModifyPartition>
-                    <ModifyPartition wcm:action="add">
-                        <Order>2</Order>
-                        <PartitionID>2</PartitionID>
-                    </ModifyPartition>
-                    <ModifyPartition wcm:action="add">
-                        <Order>3</Order>
-                        <PartitionID>3</PartitionID>
-                        <Label>Windows</Label>
-                        <Format>NTFS</Format>
-                        <Letter>C</Letter>
-                    </ModifyPartition>
-                </ModifyPartitions>
-            </Disk>
-        </DiskConfiguration>
-
-        <!-- Windows image selectie op naam -->
-        <ImageInstall>
-            <OSImage>
-                <InstallTo>
+            <!-- Schijfindeling: GPT, Disk 0, wist bestaande partities -->
+            <DiskConfiguration>
+                <Disk wcm:action="add">
                     <DiskID>0</DiskID>
-                    <PartitionID>3</PartitionID>
-                </InstallTo>
-                <InstallFrom>
-                    <MetaData wcm:action="add">
-                        <Key>/IMAGE/NAME</Key>
-                        <Value>Windows 11 Pro</Value>
-                    </MetaData>
-                </InstallFrom>
-            </OSImage>
-        </ImageInstall>
+                    <WillWipeDisk>true</WillWipeDisk>
+                    <CreatePartitions>
+                        <!-- EFI System Partition -->
+                        <CreatePartition wcm:action="add">
+                            <Order>1</Order>
+                            <Type>EFI</Type>
+                            <Size>100</Size>
+                        </CreatePartition>
+                        <!-- Microsoft Reserved Partition -->
+                        <CreatePartition wcm:action="add">
+                            <Order>2</Order>
+                            <Type>MSR</Type>
+                            <Size>16</Size>
+                        </CreatePartition>
+                        <!-- Windows partitie - rest van de schijf -->
+                        <CreatePartition wcm:action="add">
+                            <Order>3</Order>
+                            <Type>Primary</Type>
+                            <Extend>true</Extend>
+                        </CreatePartition>
+                    </CreatePartitions>
+                    <ModifyPartitions>
+                        <ModifyPartition wcm:action="add">
+                            <Order>1</Order>
+                            <PartitionID>1</PartitionID>
+                            <Label>System</Label>
+                            <Format>FAT32</Format>
+                        </ModifyPartition>
+                        <ModifyPartition wcm:action="add">
+                            <Order>2</Order>
+                            <PartitionID>2</PartitionID>
+                        </ModifyPartition>
+                        <ModifyPartition wcm:action="add">
+                            <Order>3</Order>
+                            <PartitionID>3</PartitionID>
+                            <Label>Windows</Label>
+                            <Format>NTFS</Format>
+                            <Letter>C</Letter>
+                        </ModifyPartition>
+                    </ModifyPartitions>
+                </Disk>
+            </DiskConfiguration>
 
-    </component>
-</settings>
+            <!-- Windows image selectie op naam -->
+            <ImageInstall>
+                <OSImage>
+                    <InstallTo>
+                        <DiskID>0</DiskID>
+                        <PartitionID>3</PartitionID>
+                    </InstallTo>
+                    <InstallFrom>
+                        <MetaData wcm:action="add">
+                            <Key>/IMAGE/NAME</Key>
+                            <Value>Windows 11 Pro</Value>
+                        </MetaData>
+                    </InstallFrom>
+                </OSImage>
+            </ImageInstall>
+        </component>
+    </settings>
 
-<!-- ═══════════════════════════════════════════════════════════════════
-      PASS 3: oobeSystem — OOBE en regionale instellingen
-      ════════════════════════════════════════════════════════════════════ -->
-<settings pass="oobeSystem">
-    <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+    <!-- 
+        PASS 2: specialize - OOBE updates & netwerkchecks blokkeren VÓÓR OOBE start
+    -->
+    <settings pass="specialize">
+        <component name="Microsoft-Windows-Deployment"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS"
+                   xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+            <RunSynchronous>
+                <!-- Schakel automatische update-checks in OOBE uit -->
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>1</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v DisableOOBEUpdate /t REG_DWORD /d 1 /f</Path>
+                    <Description>Disable OOBE Updates</Description>
+                </RunSynchronousCommand>
+                <!-- Voorkom netwerk/verbinding dwang tijdens OOBE -->
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>2</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v DisableOOBEConnection /t REG_DWORD /d 1 /f</Path>
+                    <Description>Disable OOBE Connection Check</Description>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>3</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v DisableAsyncOOBE /t REG_DWORD /d 1 /f</Path>
+                    <Description>Disable Async OOBE</Description>
+                </RunSynchronousCommand>
+                <!-- Tijdelijke Windows Update blokkade tijdens de installatiefase -->
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>4</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" /v DoNotConnectToWindowsUpdateInternetLocations /t REG_DWORD /d 1 /f</Path>
+                    <Description>Disable WU Internet Locations during Setup</Description>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>5</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoUpdate /t REG_DWORD /d 1 /f</Path>
+                    <Description>Disable Auto Update during Setup</Description>
+                </RunSynchronousCommand>
+            </RunSynchronous>
+        </component>
+    </settings>
 
-        <!-- OOBE-schermen filteren (Online account overslaan, lokaal account wel tonen) -->
-        <OOBE>
-            <HideEULAPage>true</HideEULAPage>
-            <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
-            <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
-            <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
-            <HideLocalAccountScreen>false</HideLocalAccountScreen>
-            <ProtectYourPC>3</ProtectYourPC>
-            <UnattendEnableRetailDemo>false</UnattendEnableRetailDemo>
-        </OOBE>
+    <!-- 
+        PASS 3: oobeSystem - OOBE en regionale instellingen
+    -->
+    <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-Shell-Setup"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS"
+                   xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+            <!-- OOBE-schermen filteren (Online account overslaan, lokaal account wel tonen) -->
+            <OOBE>
+                <HideEULAPage>true</HideEULAPage>
+                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                <HideLocalAccountScreen>false</HideLocalAccountScreen>
+                <ProtectYourPC>3</ProtectYourPC>
+                <UnattendEnableRetailDemo>false</UnattendEnableRetailDemo>
+            </OOBE>
+            <!-- Tijdzone -->
+            <TimeZone>W. Europe Standard Time</TimeZone>
+        </component>
 
-        <!-- Tijdzone -->
-        <TimeZone>W. Europe Standard Time</TimeZone>
-
-    </component>
-
-    <!-- Regio en toetsenbord in de OOBE/Windows omgeving -->
-    <component name="Microsoft-Windows-International-Core"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
-        <InputLocale>0409:00020409</InputLocale>
-        <SystemLocale>nl-NL</SystemLocale>
-        <UILanguage>en-GB</UILanguage>
-        <UserLocale>nl-NL</UserLocale>
-    </component>
-
-</settings>
+        <!-- Regio en toetsenbord in de OOBE/Windows omgeving -->
+        <component name="Microsoft-Windows-International-Core"
+                   processorArchitecture="amd64"
+                   publicKeyToken="31bf3856ad364e35"
+                   language="neutral"
+                   versionScope="nonSxS"
+                   xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+            <InputLocale>0409:00020409</InputLocale>
+            <SystemLocale>nl-NL</SystemLocale>
+            <UILanguage>en-GB</UILanguage>
+            <UserLocale>nl-NL</UserLocale>
+        </component>
+    </settings>
 </unattend>

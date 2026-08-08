@@ -149,6 +149,7 @@ Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "UploadUserActiv
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCortana" 0
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchUseWeb" 0
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "DisableWebSearch" 1
+
 # Disable Bing Web Search in Start Menu
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
 
@@ -216,81 +217,11 @@ foreach ($task in $edgeTasks) {
 # 6) First-logon task
 Write-Log "Step 6: creating first-logon task"
 $firstLogonScriptPath = "$env:WINDIR\Setup\Scripts\firstlogon.ps1"
-$firstLogonScript = @'
-$logPath = "$env:USERPROFILE\debloat-firstlogon.log"
-"$(Get-Date) First-logon script started" | Out-File $logPath -Append
-
-# Remove OneDrive per-user
 try {
-    $odSetup = "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDriveSetup.exe"
-    if (Test-Path $odSetup) {
-        Start-Process -FilePath $odSetup -ArgumentList "/uninstall" -Wait -NoNewWindow
-        "$(Get-Date) OneDrive uninstalled" | Out-File $logPath -Append
-    } else {
-        "$(Get-Date) OneDrive not found, skipping" | Out-File $logPath -Append
+    if (-not (Test-Path $firstLogonScriptPath)) {
+        throw "first-logon script not found at $firstLogonScriptPath"
     }
-} catch {
-    "$(Get-Date) OneDrive removal failed: $($_.Exception.Message)" | Out-File $logPath -Append
-}
 
-# Install Firefox via Winget
-try {
-    "$(Get-Date) Installing Firefox via Winget..." | Out-File $logPath -Append
-    $wingetResult = winget install --id Mozilla.Firefox -e --silent --accept-source-agreements --accept-package-agreements 2>&1
-    "$(Get-Date) Firefox installation finished: $wingetResult" | Out-File $logPath -Append
-} catch {
-    "$(Get-Date) Firefox installation failed: $($_.Exception.Message)" | Out-File $logPath -Append
-}
-
-# Create Public Desktop Shortcuts
-try {
-    "$(Get-Date) Creating Public Desktop shortcuts..." | Out-File $logPath -Append
-    $publicDesktop = "$env:PUBLIC\Desktop"
-
-    # SetupToolbox.url
-    $toolboxShortcutPath = "$publicDesktop\SetupToolbox.url"
-    $toolboxContent = "[InternetShortcut]`r`nURL=https://github.com/MisterDuckles/SetupToolbox"
-    Set-Content -Path $toolboxShortcutPath -Value $toolboxContent -Encoding UTF8
-    "$(Get-Date) SetupToolbox.url created" | Out-File $logPath -Append
-
-    # Windows Activeren (MAS).cmd
-    $masShortcutPath = "$publicDesktop\Windows Activeren (MAS).cmd"
-    $masContent = "@echo off`r`npowershell -Command `"irm https://get.activated.win | iex`""
-    Set-Content -Path $masShortcutPath -Value $masContent -Encoding ASCII
-    "$(Get-Date) Windows Activeren (MAS).cmd created" | Out-File $logPath -Append
-} catch {
-    "$(Get-Date) Creating shortcuts failed: $($_.Exception.Message)" | Out-File $logPath -Append
-}
-
-# Force single language list with US-International layout only
-try {
-    "$(Get-Date) Setting single US-International keyboard layout..." | Out-File $logPath -Append
-    $langList = New-WinUserLanguageList -Language "en-US"
-    $langList[0].InputMethodTips.Clear()
-    $langList[0].InputMethodTips.Add("0409:00020409")
-    Set-WinUserLanguageList -LanguageList $langList -Force
-    "$(Get-Date) Keyboard layout updated to US-International only" | Out-File $logPath -Append
-} catch {
-    "$(Get-Date) Keyboard layout update failed: $($_.Exception.Message)" | Out-File $logPath -Append
-}
-
-# Remove pinned Microsoft Store shortcut from taskbar
-try {
-    "$(Get-Date) Unpinning Microsoft Store from taskbar..." | Out-File $logPath -Append
-    $taskbarPath = "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
-    Get-ChildItem -Path $taskbarPath -Filter "*Store*" -ErrorAction SilentlyContinue | Remove-Item -Force
-    "$(Get-Date) Microsoft Store unpinned" | Out-File $logPath -Append
-} catch {
-    "$(Get-Date) Unpinning MS Store failed: $($_.Exception.Message)" | Out-File $logPath -Append
-}
-
-Unregister-ScheduledTask -TaskName "Debloat-FirstLogon" -Confirm:$false -ErrorAction SilentlyContinue
-"$(Get-Date) First-logon task removed" | Out-File $logPath -Append
-'@
-
-$firstLogonScript | Out-File -FilePath $firstLogonScriptPath -Encoding UTF8 -Force
-
-try {
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File `"$firstLogonScriptPath`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
