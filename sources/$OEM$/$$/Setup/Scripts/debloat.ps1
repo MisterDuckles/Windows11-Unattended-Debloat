@@ -14,12 +14,10 @@ function Set-RegValue {
         [object]$Value,
         [string]$Type = "DWord"
     )
-
     try {
         if (-not (Test-Path $Path)) {
             New-Item -Path $Path -Force | Out-Null
         }
-
         if ($null -eq (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue)) {
             New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
         } else {
@@ -35,7 +33,6 @@ Write-Log "=== Debloat script started ==="
 
 # 1) Remove provisioned and installed AppX packages
 Write-Log "Step 1: removing AppX bloat packages"
-
 $appsToRemove = @(
     "Microsoft.Copilot",
     "MSTeams",
@@ -112,8 +109,10 @@ foreach ($app in $appsToRemove) {
     }
 }
 
-# 2) Remove OneDrive
+# 2) Remove OneDrive completely and prevent automatic installation
 Write-Log "Step 2: removing OneDrive"
+Stop-Process -Name "OneDrive", "OneDriveSetup" -Force -ErrorAction SilentlyContinue
+
 $oneDriveInstallers = @(
     "$env:SYSTEMROOT\SysWOW64\OneDriveSetup.exe",
     "$env:SYSTEMROOT\System32\OneDriveSetup.exe"
@@ -130,8 +129,26 @@ foreach ($installer in $oneDriveInstallers) {
     }
 }
 
+# Active Setup register keys verwijderen om herinstallatie bij nieuwe gebruikers te stoppen
+$activeSetupKeys = @(
+    "HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\{8C33162D-F511-4432-8A7A-277D4E0E59F2}",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Active Setup\Installed Components\{8C33162D-F511-4432-8A7A-277D4E0E59F2}"
+)
+foreach ($key in $activeSetupKeys) {
+    if (Test-Path $key) { Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# Run keys opschonen
+Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "OneDriveSetup" -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run" -Name "OneDriveSetup" -ErrorAction SilentlyContinue
+
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive" "DisableFileSyncNGSC" 1
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive" "DisableLibrariesDefaultSaveToOneDrive" 1
+
+# Installation executables opruimen
+foreach ($installer in $oneDriveInstallers) {
+    if (Test-Path $installer) { Remove-Item -Path $installer -Force -ErrorAction SilentlyContinue }
+}
 
 # 3) Privacy and telemetry hardening
 Write-Log "Step 3: applying privacy and telemetry policies"
@@ -185,8 +202,8 @@ Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint" "D
 Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint" "DisableGenerativeFill" 1
 Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint" "DisableImageCreator" 1
 
-# 5) Edge suppression and update blocking
-Write-Log "Step 5: applying Edge suppression"
+# 5) Edge suppression & Desktop Shortcut Blocking
+Write-Log "Step 5: applying Edge suppression and desktop shortcut policies"
 $edgePolicy = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
 Set-RegValue $edgePolicy "HideFirstRunExperience" 1
 Set-RegValue $edgePolicy "EdgeCopilotEnabled" 0
@@ -196,9 +213,12 @@ Set-RegValue $edgePolicy "DiagnosticData" 0
 Set-RegValue $edgePolicy "SearchSuggestEnabled" 0
 Set-RegValue $edgePolicy "StartupBoostEnabled" 0
 Set-RegValue $edgePolicy "BackgroundModeEnabled" 0
+Set-RegValue $edgePolicy "CreateDesktopShortcutDefault" 0
 
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate" "Install{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062}" 0
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate" "UpdateDefault" 0
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate" "CreateDesktopShortcutDefault" 0
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate" "RemoveDesktopShortcutDefault" 1
 
 $edgeTasks = @(
     "\Microsoft\EdgeUpdate\MicrosoftEdgeUpdateTaskMachineCore",
@@ -207,11 +227,78 @@ $edgeTasks = @(
     "\Microsoft\MicrosoftEdge\BrowserUpdateReportingTask",
     "\Microsoft\MicrosoftEdge\BrowserUpdateInstallerTask"
 )
-
 foreach ($task in $edgeTasks) {
     try {
         Disable-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue | Out-Null
     } catch {}
+}
+
+# Taskbar layout via de echte, policy-backed mechanism (HKLM StartLayoutFile/LockedStartLayout).
+# LayoutModification.xml losjes in het Default-profiel plaatsen wordt door Windows 11 niet meer
+# betrouwbaar gelezen (Microsoft: "Import-StartLayout is no longer supported in Windows 11" - hetzelfde
+# geldt voor losse LayoutModification bestanden buiten policy-context). De GPO-instelling "Start Layout"
+# (Computer Configuration > Administrative Templates > Start Menu and Taskbar > Start Layout) is intern
+# gewoon HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer\StartLayoutFile + LockedStartLayout=1.
+# Omdat dit een policy-registersleutel is (i.p.v. een los bestand dat Explorer toevallig oppikt), leest
+# Explorer hem bij ELKE start, ook bij de allereerste inlog van een account dat nu nog niet bestaat.
+# We zetten hem hier vast (SYSTEM, vóór OOBE) en maken hem in firstlogon.ps1 na de eerste toepassing weer
+# los, zodat de gebruiker zijn taakbalk daarna gewoon weer vrij kan aanpassen.
+Write-Log "Step 5b: registering machine-wide Start/Taskbar layout policy (Edge & Store removed)"
+$layoutScriptDir = "$env:WINDIR\Setup\Scripts"
+if (-not (Test-Path $layoutScriptDir)) { New-Item -Path $layoutScriptDir -ItemType Directory -Force | Out-Null }
+$taskbarLayoutPath = "$layoutScriptDir\TaskbarLayout.xml"
+$taskbarLayoutXml = @'
+<?xml version="1.0" encoding="utf-8"?>
+<LayoutModificationTemplate
+    xmlns="http://schemas.microsoft.com/Start/2014/LayoutModification"
+    xmlns:defaultlayout="http://schemas.microsoft.com/Start/2014/FullDefaultLayout"
+    xmlns:start="http://schemas.microsoft.com/Start/2014/StartLayout"
+    xmlns:taskbar="http://schemas.microsoft.com/Start/2014/TaskbarLayout"
+    Version="1">
+  <CustomTaskbarLayoutCollection PinListPlacement="Replace">
+    <defaultlayout:TaskbarLayout>
+      <taskbar:TaskbarPinList>
+        <taskbar:DesktopApp DesktopApplicationID="Microsoft.Windows.Explorer" />
+      </taskbar:TaskbarPinList>
+    </defaultlayout:TaskbarLayout>
+  </CustomTaskbarLayoutCollection>
+</LayoutModificationTemplate>
+'@
+Set-Content -Path $taskbarLayoutPath -Value $taskbarLayoutXml -Encoding UTF8 -Force
+
+# Verify the file actually landed and is schema-sane BEFORE we ever trust it. This is here because
+# the previous version of this XML was well-formed (parsed fine) but schema-invalid (missing the
+# mandatory <taskbar:TaskbarPinList> wrapper around pin entries per the XSD at
+# learn.microsoft.com/windows/configuration/taskbar/xsd) - Explorer silently discarded the whole
+# override and fell back to default OS pins (Edge/Store) instead of erroring or partially applying.
+# A plain [xml] parse check would NOT have caught that specific mistake (it's syntactically valid
+# XML), so we additionally assert the wrapper element is actually present.
+try {
+    if (-not (Test-Path $taskbarLayoutPath)) {
+        throw "TaskbarLayout.xml was not written to $taskbarLayoutPath"
+    }
+    $writtenXml = Get-Content -Path $taskbarLayoutPath -Raw
+    [xml]$parsedXml = $writtenXml   # throws if not well-formed
+    if ($writtenXml -notmatch '<taskbar:TaskbarPinList>') {
+        throw "written XML is missing the required <taskbar:TaskbarPinList> wrapper - Explorer will silently ignore the whole override and fall back to default pins"
+    }
+    Write-Log "Taskbar layout XML verified: well-formed and contains TaskbarPinList wrapper ($($writtenXml.Length) bytes at $taskbarLayoutPath)"
+} catch {
+    Write-Log "ERROR: TaskbarLayout.xml verification failed - $($_.Exception.Message)"
+}
+
+$explorerPolicyKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
+Set-RegValue $explorerPolicyKey "StartLayoutFile" $taskbarLayoutPath "String"
+Set-RegValue $explorerPolicyKey "LockedStartLayout" 1 "DWord"
+
+# Read back what we just wrote instead of assuming the write succeeded - this was previously assumed,
+# never confirmed.
+try {
+    $verifyStartLayoutFile = (Get-ItemProperty -Path $explorerPolicyKey -Name "StartLayoutFile" -ErrorAction Stop).StartLayoutFile
+    $verifyLockedStartLayout = (Get-ItemProperty -Path $explorerPolicyKey -Name "LockedStartLayout" -ErrorAction Stop).LockedStartLayout
+    Write-Log "Registry verified: StartLayoutFile='$verifyStartLayoutFile' LockedStartLayout=$verifyLockedStartLayout"
+} catch {
+    Write-Log "ERROR: failed to read back StartLayoutFile/LockedStartLayout after writing - $($_.Exception.Message)"
 }
 
 # 6) First-logon task
@@ -221,17 +308,14 @@ try {
     if (-not (Test-Path $firstLogonScriptPath)) {
         throw "first-logon script not found at $firstLogonScriptPath"
     }
-
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File `"$firstLogonScriptPath`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
-
     Register-ScheduledTask -TaskName "Debloat-FirstLogon" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
     Write-Log "Created task: Debloat-FirstLogon"
 } catch {
     Write-Log "WARN: failed creating first-logon task - $($_.Exception.Message)"
 }
 
-Write-Log "IMPORTANT: remove Edge manually in Settings > Apps > Installed apps > Microsoft Edge"
 Write-Log "=== Debloat script finished ==="
