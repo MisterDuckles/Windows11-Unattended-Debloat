@@ -1,9 +1,8 @@
 # PROGRESS_REPORT: Windows 11 Unattended Setup
 
 ## Huidige Status
-- **Status:** Fase 3 updates doorgevoerd (OOBE Update Bypass, Toetsenbordtaal & Taskbar Debloat)
-- **Laatst bijgewerkt:** 2026-08-05
-- **Actieve Agent:** Roo Code (Lokale AI)
+- **Status:** OOBE-onderzoek afgesloten, robuustheidsronde doorgevoerd. Klaar om te testen.
+- **Laatst bijgewerkt:** 2026-08-12
 
 ---
 
@@ -12,7 +11,7 @@
 - `autounattend.xml` aangepast voor US-English ISO met US-International layout (0409:00020409)
 - OOBE stopt voor een handmatig lokaal account (SkipUserOOBE = false)
 - HideSecurityQuestionsFromLocalUsers is geactiveerd in debloat.ps1
-- `DisableOOBEUpdate = 1` ingesteld in `debloat.ps1` om de OOBE update check over te slaan
+- ~~`DisableOOBEUpdate = 1` slaat de OOBE update check over~~ — **onjuist gebleken.** De key wordt op 25H2 niet gehonoreerd; de scan draait alsnog. Zie ROADMAP.md → "Onderzoek: OOBE update-schermen". De scan wordt nu afgekapt op 14 seconden via een loopback-WSUS-redirect.
 - `firstlogon.ps1` forceert nu de toetsenbordtaal naar enkel US-International (`0409:00020409`) en unpint de Microsoft Store van de taakbalk
 - Bing Search in het Startmenu en reclame/gesponsorde suggesties definitief uitgeschakeld via `debloat.ps1`.
 - Fase 3 afgerond (Hibernation behouden, Contextmenu overgeslagen).
@@ -29,7 +28,19 @@
 ---
 
 ## Foutlogboek & Escalaties (3-Strikes Rule)
-*Geen actieve fouten.*
+
+**Opgelost op 2026-08-12** (audit van de volledige keten):
+
+| # | Probleem | Gevolg |
+|---|---|---|
+| 1 | WU-blokkade werd alleen opgeheven aan het eind van `firstlogon.ps1`, achter onbegrensde netwerkcalls | Machine kon uitgeleverd worden met permanent kapotte Windows Update |
+| 2 | Geen tegengif in `autounattend.xml` zelf | Handmatig kopiëren zonder `$OEM$` gaf gif zonder tegengif |
+| 3 | `Register-ScheduledTask` faalde stil; `BUILTIN\Users` is gelokaliseerd | Op niet-Engelse image geen first-logon taak, log meldde tóch succes |
+| 4 | `launcher.ps1` draaide ongeverifieerde remote code als SYSTEM, token in cleartext | Supply-chain risico zodra de repo public wordt |
+| 5 | `build-helper.ps1` gooide robocopy's exitcode weg | Onvolledige ISO werd als "SUCCESVOL GEBOUWD" gemeld |
+| 6 | 3,44 GB ISO in git-history | Elke push geweigerd door GitHub |
+
+Kleinere zaken uit dezelfde ronde: `Remove-AppxPackage` logde altijd succes (non-terminating error), `winget`-exitcode werd nooit gelezen, SetupToolbox-download werd alleen op bytegrootte geaccepteerd, Start-menu kon vergrendeld worden tegen een niet-bestaande layout, en de AppX-inventaris werd 102× opnieuw opgehaald binnen de lus.
 
 ---
 
