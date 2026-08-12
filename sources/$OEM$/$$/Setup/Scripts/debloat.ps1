@@ -83,29 +83,45 @@ $appsToRemove = @(
     "MicrosoftCorporationII.QuickAssist",
     "Microsoft.StartExperiencesApp",
     "Microsoft.Xbox.TCUI",
-    "Microsoft.XboxGameCallableUI",
+    # Microsoft.XboxGameCallableUI bewust NIET in deze lijst: dat is een NonRemovable SystemApp
+    # onder C:\Windows\SystemApps. Hij faalde gegarandeerd bij elke run met 0x80070032.
     "Microsoft.WindowsAppRuntime.Main"
 )
 
+# De inventarissen EEN keer ophalen. Voorheen stonden deze twee Get-* calls binnen de lus,
+# terwijl geen van beide $app als argument neemt: dat waren ruim 100 volledige enumeraties
+# van alle AppX-pakketten, op een trage schijf minutenlang pure overhead op het
+# "Just a moment"-scherm zonder dat er iets gebeurde.
+$allProvisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue)
+$allInstalled   = @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue)
+Write-Log "Inventory: $($allProvisioned.Count) provisioned, $($allInstalled.Count) installed packages"
+
 foreach ($app in $appsToRemove) {
-    try {
-        $provisioned = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like "*$app*" }
-        foreach ($pkg in $provisioned) {
-            Remove-AppxProvisionedPackage -Online -PackageName $pkg.PackageName -AllUsers | Out-Null
+    foreach ($pkg in ($allProvisioned | Where-Object { $_.DisplayName -like "*$app*" })) {
+        try {
+            # -ErrorAction Stop is nodig omdat deze cmdlets non-terminating errors gooien:
+            # zonder dit vuurde de catch nooit en werd er ALTIJD "Removed ..." gelogd, ook
+            # na een mislukking. Daardoor las de terugkerende 0x80070032 als ruis.
+            Remove-AppxProvisionedPackage -Online -PackageName $pkg.PackageName -AllUsers -ErrorAction Stop | Out-Null
             Write-Log "Removed provisioned package: $($pkg.DisplayName)"
+        } catch {
+            Write-Log "WARN: provisioned removal failed for $($pkg.DisplayName) - $($_.Exception.Message)"
         }
-    } catch {
-        Write-Log "WARN: provisioned removal failed for $app - $($_.Exception.Message)"
     }
 
-    try {
-        $installed = Get-AppxPackage -AllUsers | Where-Object { $_.Name -like "*$app*" }
-        foreach ($pkg in $installed) {
-            Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers | Out-Null
-            Write-Log "Removed installed package: $($pkg.Name)"
+    foreach ($pkg in ($allInstalled | Where-Object { $_.Name -like "*$app*" })) {
+        # SystemApps onder C:\Windows\SystemApps zijn met geen enkele ondersteunde methode
+        # te verwijderen. Ze meenemen levert alleen een gegarandeerde fout per run op.
+        if ($pkg.NonRemovable -or $pkg.SignatureKind -eq 'System') {
+            Write-Log "Skipped (system app, not removable): $($pkg.Name)"
+            continue
         }
-    } catch {
-        Write-Log "WARN: installed removal failed for $app - $($_.Exception.Message)"
+        try {
+            Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop | Out-Null
+            Write-Log "Removed installed package: $($pkg.Name)"
+        } catch {
+            Write-Log "WARN: installed removal failed for $($pkg.Name) - $($_.Exception.Message)"
+        }
     }
 }
 
@@ -273,6 +289,7 @@ Set-Content -Path $taskbarLayoutPath -Value $taskbarLayoutXml -Encoding UTF8 -Fo
 # override and fell back to default OS pins (Edge/Store) instead of erroring or partially applying.
 # A plain [xml] parse check would NOT have caught that specific mistake (it's syntactically valid
 # XML), so we additionally assert the wrapper element is actually present.
+$layoutOk = $false
 try {
     if (-not (Test-Path $taskbarLayoutPath)) {
         throw "TaskbarLayout.xml was not written to $taskbarLayoutPath"
@@ -283,22 +300,36 @@ try {
         throw "written XML is missing the required <taskbar:TaskbarPinList> wrapper - Explorer will silently ignore the whole override and fall back to default pins"
     }
     Write-Log "Taskbar layout XML verified: well-formed and contains TaskbarPinList wrapper ($($writtenXml.Length) bytes at $taskbarLayoutPath)"
+    $layoutOk = $true
 } catch {
     Write-Log "ERROR: TaskbarLayout.xml verification failed - $($_.Exception.Message)"
 }
 
 $explorerPolicyKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
-Set-RegValue $explorerPolicyKey "StartLayoutFile" $taskbarLayoutPath "String"
-Set-RegValue $explorerPolicyKey "LockedStartLayout" 1 "DWord"
+
+# ALLEEN vergrendelen als er ook echt een geldige layout ligt. Voorheen liep dit door na een
+# mislukte verificatie, waardoor LockedStartLayout=1 werd gezet met StartLayoutFile wijzend
+# naar een bestand dat niet bestond: pin/unpin uitgeschakeld en geen layout om te tonen.
+# Een niet-aangepaste taakbalk is een veel beter faalscenario dan een vergrendelde lege.
+if ($layoutOk) {
+    Set-RegValue $explorerPolicyKey "StartLayoutFile" $taskbarLayoutPath "String"
+    Set-RegValue $explorerPolicyKey "LockedStartLayout" 1 "DWord"
+} else {
+    Write-Log "WARN: skipping StartLayoutFile/LockedStartLayout - refusing to lock the Start menu against an invalid layout"
+    Remove-ItemProperty -Path $explorerPolicyKey -Name "StartLayoutFile" -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $explorerPolicyKey -Name "LockedStartLayout" -ErrorAction SilentlyContinue
+}
 
 # Read back what we just wrote instead of assuming the write succeeded - this was previously assumed,
 # never confirmed.
-try {
-    $verifyStartLayoutFile = (Get-ItemProperty -Path $explorerPolicyKey -Name "StartLayoutFile" -ErrorAction Stop).StartLayoutFile
-    $verifyLockedStartLayout = (Get-ItemProperty -Path $explorerPolicyKey -Name "LockedStartLayout" -ErrorAction Stop).LockedStartLayout
-    Write-Log "Registry verified: StartLayoutFile='$verifyStartLayoutFile' LockedStartLayout=$verifyLockedStartLayout"
-} catch {
-    Write-Log "ERROR: failed to read back StartLayoutFile/LockedStartLayout after writing - $($_.Exception.Message)"
+if ($layoutOk) {
+    try {
+        $verifyStartLayoutFile = (Get-ItemProperty -Path $explorerPolicyKey -Name "StartLayoutFile" -ErrorAction Stop).StartLayoutFile
+        $verifyLockedStartLayout = (Get-ItemProperty -Path $explorerPolicyKey -Name "LockedStartLayout" -ErrorAction Stop).LockedStartLayout
+        Write-Log "Registry verified: StartLayoutFile='$verifyStartLayoutFile' LockedStartLayout=$verifyLockedStartLayout"
+    } catch {
+        Write-Log "ERROR: failed to read back StartLayoutFile/LockedStartLayout after writing - $($_.Exception.Message)"
+    }
 }
 
 # 6) First-logon task
@@ -311,11 +342,44 @@ try {
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -NonInteractive -WindowStyle Hidden -File `"$firstLogonScriptPath`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    $principal = New-ScheduledTaskPrincipal -GroupId "BUILTIN\Users" -RunLevel Highest
-    Register-ScheduledTask -TaskName "Debloat-FirstLogon" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-    Write-Log "Created task: Debloat-FirstLogon"
+
+    # S-1-5-32-545 in plaats van "BUILTIN\Users": die literal is GELOKALISEERD en resolvet
+    # niet op een niet-Engelse image (op een Nederlandse build heet de groep "Gebruikers").
+    # De SID is overal gelijk.
+    $principal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Highest
+
+    # -ErrorAction Stop is noodzakelijk: Register-ScheduledTask is een CIM-cmdlet en meldt
+    # fouten als ERROR_NONE_MAPPED non-terminating, waardoor de catch hieronder niet vuurde
+    # en er alsnog "Created task" in het log belandde na een mislukte registratie.
+    Register-ScheduledTask -TaskName "Debloat-FirstLogon" -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
+
+    # Terugvragen in plaats van aannemen.
+    if (-not (Get-ScheduledTask -TaskName "Debloat-FirstLogon" -ErrorAction SilentlyContinue)) {
+        throw "task registered without error but cannot be read back"
+    }
+    Write-Log "Created task: Debloat-FirstLogon (verified)"
 } catch {
-    Write-Log "WARN: failed creating first-logon task - $($_.Exception.Message)"
+    Write-Log "ERROR: failed creating first-logon task - $($_.Exception.Message)"
+
+    # Zonder deze taak draait firstlogon.ps1 nooit, en dan blijft de machine achter met een
+    # dode WSUS (permanent kapotte Windows Update) en een vergrendeld Startmenu. Liever hier
+    # meteen terugdraaien dan een machine uitleveren die er heel uitziet en het niet is.
+    Write-Log "ERROR: rolling back Windows Update gate and layout lock inline"
+    try {
+        $wu = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+        foreach ($v in 'WUServer', 'WUStatusServer', 'UpdateServiceUrlAlternate') {
+            Remove-ItemProperty -Path $wu -Name $v -ErrorAction SilentlyContinue
+        }
+        foreach ($v in 'UseWUServer', 'NoAutoUpdate') {
+            Remove-ItemProperty -Path "$wu\AU" -Name $v -ErrorAction SilentlyContinue
+        }
+        $explorerPolicyKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
+        Remove-ItemProperty -Path $explorerPolicyKey -Name "LockedStartLayout" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $explorerPolicyKey -Name "StartLayoutFile" -ErrorAction SilentlyContinue
+        Write-Log "Rollback done: WU gate and layout lock removed, taskbar customisation skipped"
+    } catch {
+        Write-Log "CRITICAL: rollback itself failed - $($_.Exception.Message)"
+    }
 }
 
 Write-Log "=== Debloat script finished ==="
