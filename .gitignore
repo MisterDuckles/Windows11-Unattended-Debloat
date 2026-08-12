@@ -1,0 +1,17 @@
+# Diagnostiek opgehaald uit test-VMs (kan hostnames, accountnamen en hardware-ids bevatten)
+oobe-logs_*/
+oobe-logs_*.zip
+vm-logs/
+
+# Build-artefacten
+*.iso
+mount/
+scratch/
+build/
+out/
+
+# Losse Windows-logs die tijdens troubleshooten in de repo belanden
+*.evtx
+setupact.log
+setuperr.log
+WindowsUpdate*.log
