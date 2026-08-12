@@ -262,10 +262,10 @@ try {
     Write-Success "ISO gemount op $driveLetter"
 
     # 2. Kopieer naar tijdelijke map
-    Write-Host "`n[4/5] Bestanden kopiëren naar bouwmap: $tempFolder" -ForegroundColor Cyan
+    Write-Host "`n[4/5] Bestanden kopieren naar bouwmap: $tempFolder" -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $tempFolder -Force | Out-Null
     
-    Write-Host "    Bezig met kopiëren van ISO inhoud (even geduld)..." -ForegroundColor Gray
+    Write-Host "    Bezig met kopieren van ISO inhoud (even geduld)..." -ForegroundColor Gray
     & robocopy.exe "$driveLetter\" "$tempFolder" /E /R:1 /W:1 /NDL /NFL /NJH /NJS | Out-Null
 
     # Robocopy gebruikt bitflags: 0-7 is succes, 8 en hoger betekent dat er bestanden zijn
@@ -275,7 +275,7 @@ try {
         throw "robocopy faalde met exitcode $LASTEXITCODE - de kopie van de ISO-inhoud is onvolledig. Genoeg vrije ruimte op $env:TEMP?"
     }
 
-    # Dismount ISO direct na kopiëren
+    # Dismount ISO direct na kopieren
     Dismount-DiskImage -ImagePath $SourceIso | Out-Null
     $isoMounted = $false
     Write-Success "Inhoud gekopieerd en bron ISO gedemonteerd."
@@ -307,7 +307,7 @@ try {
     if ($missing.Count -gt 0) {
         throw "Na injectie ontbreken in de bouwmap: $($missing -join ', ')"
     }
-    Write-Success "Custom bestanden geïnjecteerd en geverifieerd ($($requiredScripts.Count + 1) bestanden)."
+    Write-Success "Custom bestanden geinjecteerd en geverifieerd ($($requiredScripts.Count + 1) bestanden)."
 
     # 4. Bouwen van de nieuwe ISO
     Write-Host "`n[5/5] Genereren van nieuwe ISO: $OutputIso" -ForegroundColor Cyan

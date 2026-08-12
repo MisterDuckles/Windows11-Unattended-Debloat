@@ -257,7 +257,7 @@ foreach ($task in $edgeTasks) {
 # gewoon HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer\StartLayoutFile + LockedStartLayout=1.
 # Omdat dit een policy-registersleutel is (i.p.v. een los bestand dat Explorer toevallig oppikt), leest
 # Explorer hem bij ELKE start, ook bij de allereerste inlog van een account dat nu nog niet bestaat.
-# We zetten hem hier vast (SYSTEM, vóór OOBE) en maken hem in firstlogon.ps1 na de eerste toepassing weer
+# We zetten hem hier vast (SYSTEM, voor OOBE) en maken hem in firstlogon.ps1 na de eerste toepassing weer
 # los, zodat de gebruiker zijn taakbalk daarna gewoon weer vrij kan aanpassen.
 Write-Log "Step 5b: registering machine-wide Start/Taskbar layout policy (Edge & Store removed)"
 $layoutScriptDir = "$env:WINDIR\Setup\Scripts"
