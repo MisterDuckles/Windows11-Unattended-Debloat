@@ -1,6 +1,174 @@
 $logPath = "$env:USERPROFILE\debloat-firstlogon.log"
 "$(Get-Date) First-logon script started" | Out-File $logPath -Append
 
+# -----------------------------------------------------------------------------
+# Helper: explorer geordend herstarten (gebruikt door stap 7)
+# -----------------------------------------------------------------------------
+function Restart-ShellCleanly {
+    param(
+        [Parameter(Mandatory)][string]$LogPath,
+        [int]$ShutdownTimeoutSeconds = 15,
+        [int]$StartupTimeoutSeconds  = 45
+    )
+
+    # P/Invoke voor FindWindow + PostMessage. De type-guard voorkomt een fout als deze
+    # functie ooit twee keer in dezelfde sessie wordt aangeroepen (Add-Type gooit dan).
+    if (-not ('Win11Debloat.ShellControl' -as [type])) {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace Win11Debloat {
+    public static class ShellControl {
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    }
+}
+'@
+    }
+
+    function Get-TrayHandle { [Win11Debloat.ShellControl]::FindWindow('Shell_TrayWnd', $null) }
+
+    $graceful = $false
+    $tray = Get-TrayHandle
+
+    if ($tray -ne [IntPtr]::Zero) {
+        # WM_USER+436. Explorer sluit hierop geordend af en herstart NIET vanzelf,
+        # in tegenstelling tot een force-kill (die AutoRestartShell triggert).
+        [void][Win11Debloat.ShellControl]::PostMessage($tray, 0x5B4, [IntPtr]::Zero, [IntPtr]::Zero)
+
+        $waited = 0
+        while ($waited -lt $ShutdownTimeoutSeconds) {
+            Start-Sleep -Milliseconds 500
+            $waited += 0.5
+            if ((Get-TrayHandle) -eq [IntPtr]::Zero) { $graceful = $true; break }
+        }
+    }
+
+    if ($graceful) {
+        "$(Get-Date) Shell closed gracefully via WM_USER+436" | Out-File $LogPath -Append
+    } else {
+        # Fallback: force-kill. Windows herstart de shell dan zelf via AutoRestartShell,
+        # dus hieronder NIET nog eens expliciet starten - dat zou een losse
+        # Verkenner-venster openen in plaats van de shell.
+        "$(Get-Date) WARN: graceful shell exit did not complete, falling back to force-kill" | Out-File $LogPath -Append
+        Stop-Process -Name "explorer" -Force -ErrorAction SilentlyContinue
+    }
+
+    # Alleen zelf starten als er echt geen shell meer draait.
+    Start-Sleep -Seconds 1
+    if ((Get-TrayHandle) -eq [IntPtr]::Zero -and -not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
+        Start-Process -FilePath "$env:WINDIR\explorer.exe" -ErrorAction SilentlyContinue
+    }
+
+    # Wachten tot de taakbalk er weer staat, zodat de rest van het script niet doorloopt
+    # terwijl de gebruiker naar een leeg bureaublad kijkt.
+    $waited = 0
+    while ($waited -lt $StartupTimeoutSeconds) {
+        if ((Get-TrayHandle) -ne [IntPtr]::Zero) {
+            "$(Get-Date) Shell is back after ${waited}s" | Out-File $LogPath -Append
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+        $waited += 0.5
+    }
+
+    "$(Get-Date) WARN: shell did not reappear within ${StartupTimeoutSeconds}s" | Out-File $LogPath -Append
+    return $false
+}
+
+# -----------------------------------------------------------------------------
+# Helper: de Windows Update-blokkade uit autounattend.xml opheffen
+# -----------------------------------------------------------------------------
+function Remove-WindowsUpdateGate {
+    param([Parameter(Mandatory)][string]$LogPath)
+
+    try {
+        $wu = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+        $au = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+
+        # Loopback-WSUS uit autounattend.xml Orders 8-11. Blijven deze staan, dan faalt
+        # elke update-check voorgoed met 0x80240438.
+        foreach ($v in 'WUServer', 'WUStatusServer', 'UpdateServiceUrlAlternate') {
+            Remove-ItemProperty -Path $wu -Name $v -ErrorAction SilentlyContinue
+        }
+        foreach ($v in 'UseWUServer', 'NoAutoUpdate') {
+            Remove-ItemProperty -Path $au -Name $v -ErrorAction SilentlyContinue
+        }
+
+        # Vangnet voor machines die met een oudere ISO zijn uitgerold: deze key werd tot
+        # 2026-08-12 gezet en brak de Microsoft Store (0x8024500C bij SLS-registratie).
+        Remove-ItemProperty -Path $wu -Name "DoNotConnectToWindowsUpdateInternetLocations" -ErrorAction SilentlyContinue
+
+        Restart-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+
+        # Controleren in plaats van aannemen - dit is de enige stap waarvan stil falen
+        # betekent dat de machine nooit meer een security-update krijgt.
+        $leftover = @()
+        foreach ($v in 'WUServer', 'WUStatusServer', 'UpdateServiceUrlAlternate') {
+            if ($null -ne (Get-ItemProperty -Path $wu -Name $v -ErrorAction SilentlyContinue)) { $leftover += $v }
+        }
+        foreach ($v in 'UseWUServer', 'NoAutoUpdate') {
+            if ($null -ne (Get-ItemProperty -Path $au -Name $v -ErrorAction SilentlyContinue)) { $leftover += $v }
+        }
+
+        if ($leftover.Count -gt 0) {
+            "$(Get-Date) CRITICAL: Windows Update gate NOT fully removed, still present: $($leftover -join ', ')" | Out-File $LogPath -Append
+            return $false
+        }
+
+        "$(Get-Date) Windows Update gate removed and verified clean" | Out-File $LogPath -Append
+        return $true
+    } catch {
+        "$(Get-Date) CRITICAL: failed to remove Windows Update gate: $($_.Exception.Message)" | Out-File $LogPath -Append
+        return $false
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Helper: extern proces starten met een harde tijdslimiet
+# -----------------------------------------------------------------------------
+# Start-Process -Wait heeft geen timeout. Een installer die op een dialoog wacht of
+# vastloopt houdt daarmee het hele script tegen. Deze wrapper kapt af en geeft de
+# exitcode terug, zodat de aanroeper kan zien of het echt gelukt is.
+function Start-ProcessBounded {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [int]$TimeoutSeconds = 300,
+        [Parameter(Mandatory)][string]$LogPath
+    )
+
+    try {
+        $params = @{ FilePath = $FilePath; PassThru = $true; NoNewWindow = $true }
+        if ($ArgumentList.Count -gt 0) { $params.ArgumentList = $ArgumentList }
+        $proc = Start-Process @params -ErrorAction Stop
+
+        if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+            "$(Get-Date) WARN: $FilePath exceeded ${TimeoutSeconds}s, terminating" | Out-File $LogPath -Append
+            try { $proc.Kill() } catch { }
+            return $null
+        }
+        return $proc.ExitCode
+    } catch {
+        "$(Get-Date) WARN: could not start $FilePath - $($_.Exception.Message)" | Out-File $LogPath -Append
+        return $null
+    }
+}
+
+# 0) Windows Update-blokkade METEEN opheffen.
+#
+# Dit stond vroeger als stap 8 helemaal onderaan, achter de netwerk-wait, winget en de
+# SetupToolbox-download. Bleef een van die stappen hangen, dan werd dit nooit bereikt en
+# ging de machine de deur uit met een dode WSUS en dus permanent kapotte Windows Update.
+# Er is geen enkele reden om te wachten: OOBE is voorbij tegen de tijd dat dit script
+# draait, dus de blokkade heeft zijn werk al gedaan. Bijkomend voordeel: winget en de
+# Store hebben de un-gate nodig, want de loopback-WSUS blokkeert ook Store-acquisities.
+Remove-WindowsUpdateGate -LogPath $logPath | Out-Null
+
 # 1) Wachten tot de netwerkverbinding EN DNS-resolutie volledig actief zijn (max 90 sec)
 # Let op: pingen naar een letterlijk IP (1.1.1.1) bewijst alleen IP-bereikbaarheid, niet dat de
 # DNS-client al klaar is. Vlak na de allereerste inlog loopt DNS vaak een paar seconden achter op
@@ -42,7 +210,7 @@ try {
 
     foreach ($odSetup in $oneDrivePaths) {
         if (Test-Path $odSetup) {
-            Start-Process -FilePath $odSetup -ArgumentList "/uninstall" -Wait -NoNewWindow
+            Start-ProcessBounded -FilePath $odSetup -ArgumentList @("/uninstall") -TimeoutSeconds 120 -LogPath $logPath | Out-Null
             "$(Get-Date) OneDrive uninstalled via $odSetup" | Out-File $logPath -Append
         }
     }
@@ -56,9 +224,26 @@ try {
 
 # 3) Install Firefox via Winget
 try {
-    "$(Get-Date) Installing Firefox via Winget..." | Out-File $logPath -Append
-    $wingetResult = winget install --id Mozilla.Firefox -e --silent --accept-source-agreements --accept-package-agreements 2>&1
-    "$(Get-Date) Firefox installation finished: $wingetResult" | Out-File $logPath -Append
+    # winget bestaat niet gegarandeerd bij eerste inlog: de App Installer-alias kan nog niet
+    # geregistreerd zijn, of het pakket is uit de image gehaald. Zonder deze check draait de
+    # regel eronder in een CommandNotFoundException die als "installation failed" wordt gelogd
+    # zonder te zeggen dat winget zelf ontbrak.
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        "$(Get-Date) WARN: winget not available at first logon, skipping Firefox" | Out-File $logPath -Append
+    } else {
+        "$(Get-Date) Installing Firefox via Winget..." | Out-File $logPath -Append
+        $wingetResult = winget install --id Mozilla.Firefox -e --silent --accept-source-agreements --accept-package-agreements 2>&1
+        $wingetExit = $LASTEXITCODE
+
+        # 0 = geslaagd. 0x8A15002B = APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE, oftewel
+        # al geinstalleerd; dat is voor ons ook goed. Al het andere is een echte fout, en die
+        # werd voorheen weggeschreven als "installation finished".
+        if ($wingetExit -eq 0 -or $wingetExit -eq 0x8A15002B) {
+            "$(Get-Date) Firefox installed (winget exit 0x$('{0:X}' -f $wingetExit))" | Out-File $logPath -Append
+        } else {
+            "$(Get-Date) WARN: Firefox install failed, winget exit 0x$('{0:X}' -f $wingetExit): $wingetResult" | Out-File $logPath -Append
+        }
+    }
 } catch {
     "$(Get-Date) Firefox installation failed: $($_.Exception.Message)" | Out-File $logPath -Append
 }
@@ -87,7 +272,7 @@ try {
         $downloadUrl = $null
         for ($i = 1; $i -le 3; $i++) {
             try {
-                $release = Invoke-RestMethod -Uri "https://api.github.com/repos/MisterDuckles/SetupToolbox/releases/latest" -Headers $apiHeaders -UseBasicParsing -ErrorAction Stop
+                $release = Invoke-RestMethod -Uri "https://api.github.com/repos/MisterDuckles/SetupToolbox/releases/latest" -Headers $apiHeaders -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
                 # Assets are named "SetupToolbox-vX.Y.Z.exe" - match that pattern specifically so a future
                 # release with extra .exe assets (updater, uninstaller, etc.) can't be picked up by accident.
                 $asset = $release.assets | Where-Object { $_.name -match '^SetupToolbox-v[\d\.]+\.exe$' } | Select-Object -First 1
@@ -108,14 +293,23 @@ try {
         "$(Get-Date) Resolved download URL: $downloadUrl" | Out-File $logPath -Append
 
         for ($i = 1; $i -le 5; $i++) {
+            # Restant van een vorige poging of van een afgebroken eerdere run weggooien.
+            # Anders kan een afgekapte download de 100 KB-drempel hieronder halen en wordt
+            # een kapot bestand als geslaagd beschouwd en uitgevoerd.
+            Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue
             try {
                 "$(Get-Date) Download poging $i (BITS)..." | Out-File $logPath -Append
-                Start-BitsTransfer -Source $downloadUrl -Destination $installerPath -ErrorAction Stop
+                # -RetryTimeout begrenst hoe lang BITS een haperende verbinding blijft proberen.
+                # Zonder deze parameter kan een captive portal of half-open TCP-sessie het script
+                # onbeperkt laten hangen.
+                Start-BitsTransfer -Source $downloadUrl -Destination $installerPath -RetryTimeout 60 -ErrorAction Stop
             } catch {
                 "$(Get-Date) BITS poging $i mislukt: $($_.Exception.Message)" | Out-File $logPath -Append
                 try {
                     if (Get-Command "curl.exe" -ErrorAction SilentlyContinue) {
-                        & curl.exe -sSL -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "$downloadUrl" -o "$installerPath"
+                        # --fail: een 404/403 mag geen HTML-foutpagina naar het .exe-pad schrijven.
+                        # --max-time: harde bovengrens, anders hangt curl net zo lang als BITS deed.
+                        & curl.exe -sSL --fail --max-time 120 --connect-timeout 15 -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "$downloadUrl" -o "$installerPath"
                     } else {
                         Invoke-WebRequest -Uri $downloadUrl -OutFile $installerPath -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -UseBasicParsing -ErrorAction Stop
                     }
@@ -136,9 +330,78 @@ try {
     }
 
     "$(Get-Date) Executing SetupToolbox installer..." | Out-File $logPath -Append
-    Start-Process -FilePath $installerPath -ArgumentList "/silent" -Wait -NoNewWindow
+    $installExit = Start-ProcessBounded -FilePath $installerPath -ArgumentList @("/silent") -TimeoutSeconds 300 -LogPath $logPath
     Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue
-    "$(Get-Date) SetupToolbox installed successfully" | Out-File $logPath -Append
+
+    # Niet blind "installed successfully" loggen: dat maakte het log onbruikbaar om te
+    # controleren of het echt gelukt was.
+    if ($installExit -eq 0) {
+        "$(Get-Date) SetupToolbox installed successfully (exit 0)" | Out-File $logPath -Append
+    } elseif ($null -eq $installExit) {
+        "$(Get-Date) WARN: SetupToolbox installer timed out or could not be started" | Out-File $logPath -Append
+    } else {
+        "$(Get-Date) WARN: SetupToolbox installer returned exit code $installExit" | Out-File $logPath -Append
+    }
+
+    # 4b) Create a Public Desktop shortcut - /silent clearly skips whatever normally creates one.
+    # We don't know the installer's internal layout, so instead of hardcoding a guessed path we look
+    # it up the same way Windows itself would: via the Uninstall registry key the installer registers
+    # (present regardless of installer framework - Inno/NSIS/MSI/WiX all write one), then fall back to
+    # scanning common Program Files locations if that key isn't there for some reason.
+    try {
+        "$(Get-Date) Locating installed SetupToolbox.exe for desktop shortcut..." | Out-File $logPath -Append
+        $exePath = $null
+        $installLocation = $null
+
+        $uninstallRoots = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+        $uninstallEntry = Get-ItemProperty -Path $uninstallRoots -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like "*SetupToolbox*" } | Select-Object -First 1
+
+        if ($uninstallEntry) {
+            "$(Get-Date) Found uninstall registry entry: $($uninstallEntry.DisplayName)" | Out-File $logPath -Append
+            if ($uninstallEntry.InstallLocation) { $installLocation = $uninstallEntry.InstallLocation }
+            elseif ($uninstallEntry.DisplayIcon) { $installLocation = Split-Path -Path ($uninstallEntry.DisplayIcon -replace ',-?\d+$','') -Parent }
+        } else {
+            "$(Get-Date) No uninstall registry entry found for SetupToolbox" | Out-File $logPath -Append
+        }
+
+        if (-not $installLocation) {
+            $fallbackRoots = @("$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA\Programs")
+            foreach ($root in $fallbackRoots) {
+                if (Test-Path $root) {
+                    $match = Get-ChildItem -Path $root -Directory -Filter "*SetupToolbox*" -ErrorAction SilentlyContinue | Select-Object -First 1
+                    if ($match) { $installLocation = $match.FullName; break }
+                }
+            }
+        }
+
+        if ($installLocation -and (Test-Path $installLocation)) {
+            $exeCandidate = Get-ChildItem -Path $installLocation -Filter "SetupToolbox.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $exeCandidate) {
+                $exeCandidate = Get-ChildItem -Path $installLocation -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -notmatch "unins" } | Select-Object -First 1
+            }
+            if ($exeCandidate) { $exePath = $exeCandidate.FullName }
+        }
+
+        if ($exePath) {
+            $wshShell = New-Object -ComObject WScript.Shell
+            $shortcut = $wshShell.CreateShortcut("$env:PUBLIC\Desktop\SetupToolbox.lnk")
+            $shortcut.TargetPath = $exePath
+            $shortcut.WorkingDirectory = Split-Path -Path $exePath -Parent
+            $shortcut.IconLocation = $exePath
+            $shortcut.Save()
+            "$(Get-Date) SetupToolbox desktop shortcut created -> $exePath" | Out-File $logPath -Append
+        } else {
+            "$(Get-Date) WARN: could not locate SetupToolbox.exe on disk (checked uninstall registry + Program Files/AppData) - no shortcut created" | Out-File $logPath -Append
+        }
+    } catch {
+        "$(Get-Date) SetupToolbox shortcut creation failed: $($_.Exception.Message)" | Out-File $logPath -Append
+    }
 } catch {
     "$(Get-Date) SetupToolbox download/installation failed: $($_.Exception.Message)" | Out-File $logPath -Append
 }
@@ -198,21 +461,31 @@ try {
     Get-ChildItem -Path $taskbarPath -Filter "*Store*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem -Path $taskbarPath -Filter "*Edge*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
-    Stop-Process -Name "explorer" -Force -ErrorAction SilentlyContinue
+    # Explorer moet herstarten voordat het opheffen van de lock zichtbaar wordt.
+    #
+    # NIET met Stop-Process -Force: dat gaat via het crash-pad, laat een Winlogon 1002
+    # "The shell stopped unexpectedly" in het event log achter, en de gebruiker ziet zijn
+    # bureaublad wegvallen zonder dat iets bewaakt of het terugkomt. In de run van
+    # 2026-08-11 gebeurde dat om 21:05:22.
+    #
+    # In plaats daarvan de nette route: WM_USER+436 (0x5B4) naar Shell_TrayWnd. Dat is het
+    # bericht dat Windows zelf gebruikt voor Ctrl+Shift+rechtsklik > "Exit Explorer";
+    # explorer sluit zichzelf dan geordend af en slaat zijn state op. Daarna starten we hem
+    # expliciet en wachten tot de taakbalk er weer staat, zodat de rest van dit script niet
+    # doorloopt terwijl er geen shell is.
+    Restart-ShellCleanly -LogPath $logPath
+
     "$(Get-Date) Layout policy lock released, taskbar remains Edge/Store-free and is now user-editable" | Out-File $logPath -Append
 } catch {
     "$(Get-Date) Releasing layout policy lock failed: $($_.Exception.Message)" | Out-File $logPath -Append
 }
 
-# 8) Windows Update blokkade opheffen na eerste inlog
-try {
-    "$(Get-Date) Removing Windows Update setup blocks..." | Out-File $logPath -Append
-    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -Name "DoNotConnectToWindowsUpdateInternetLocations" -ErrorAction SilentlyContinue
-    Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoUpdate" -ErrorAction SilentlyContinue
-    "$(Get-Date) Windows Update blocks removed" | Out-File $logPath -Append
-} catch {
-    "$(Get-Date) Failed to remove Windows Update blocks: $($_.Exception.Message)" | Out-File $logPath -Append
-}
+# 8) Windows Update blokkade opheffen - TWEEDE PASSAGE
+# De eerste passage staat helemaal bovenaan (stap 0). Deze herhaling is puur een vangnet
+# voor het geval de policies tussentijds opnieuw zijn toegepast (bv. door een Group Policy
+# refresh). De functie is idempotent, dus twee keer draaien kost niets.
+Remove-WindowsUpdateGate -LogPath $logPath | Out-Null
 
 Unregister-ScheduledTask -TaskName "Debloat-FirstLogon" -Confirm:$false -ErrorAction SilentlyContinue
 "$(Get-Date) First-logon task removed" | Out-File $logPath -Append
+"$(Get-Date) === First-logon script finished ===" | Out-File $logPath -Append
