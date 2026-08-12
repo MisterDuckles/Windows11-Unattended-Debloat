@@ -121,11 +121,17 @@
                    versionScope="nonSxS"
                    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
             <RunSynchronous>
-                <!-- Schakel automatische update-checks in OOBE uit -->
+                <!-- GETEST 2026-08-11 op Win11 25H2 (build 26200): deze key wordt NIET gehonoreerd.
+                     Hij werd om 20:56:29 in de specialize-pass geschreven en stond bij controle op 1,
+                     maar de OOBE-scan draaide alsnog. Uit de gedecodeerde WU-trace:
+                       20:59:18  * END * Finding updates CallerId = OOBE ZDP, Id = 3, Exit code = 0x80240438
+                     "OOBE ZDP" = Zero Day Patch, de OOBE critical-updates fase. Er bestaat op 25H2 geen
+                     registry-key die dat scherm onderdrukt; je kunt de scan alleen laten falen (zie
+                     Orders 8-11, die hem in 14 s afkappen). Blijft staan omdat hij niets kost. -->
                 <RunSynchronousCommand wcm:action="add">
                     <Order>1</Order>
                     <Path>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v DisableOOBEUpdate /t REG_DWORD /d 1 /f</Path>
-                    <Description>Disable OOBE Updates</Description>
+                    <Description>Disable OOBE Updates (NIET gehonoreerd op 25H2 - zie comment)</Description>
                 </RunSynchronousCommand>
                 <!-- Voorkom netwerk/verbinding dwang tijdens OOBE -->
                 <RunSynchronousCommand wcm:action="add">
@@ -138,16 +144,73 @@
                     <Path>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v DisableAsyncOOBE /t REG_DWORD /d 1 /f</Path>
                     <Description>Disable Async OOBE</Description>
                 </RunSynchronousCommand>
-                <!-- Tijdelijke Windows Update blokkade tijdens de installatiefase -->
-                <RunSynchronousCommand wcm:action="add">
-                    <Order>4</Order>
-                    <Path>cmd /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" /v DoNotConnectToWindowsUpdateInternetLocations /t REG_DWORD /d 1 /f</Path>
-                    <Description>Disable WU Internet Locations during Setup</Description>
-                </RunSynchronousCommand>
+                <!-- ORDER 4 VERWIJDERD 2026-08-12 - DoNotConnectToWindowsUpdateInternetLocations.
+                     Uit de gedecodeerde WU-trace van de run van 2026-08-11 blijkt dat deze key:
+                       (a) NIETS doet voor de OOBE update-scan. Die faalt op de loopback-WSUS hieronder
+                           (Orders 8-11) met 0x80240438 WU_E_PT_ENDPOINT_UNREACHABLE, na een echte
+                           TCP-connect naar http://127.0.0.1:8530. Microsoft documenteert deze policy
+                           bovendien als alleen geldig wanneer er al een intranet update service staat.
+                       (b) WEL de Microsoft Store sloopt. Hij blokkeert de Service Locator Service die
+                           de Store/DCat-service (855E8A7C-ECB4-4CA3-B045-1DFA50104289) registreert:
+                             20:57:44.578  Processing service registrations for ServiceId 855E8A7C-...
+                             20:57:44.580  *FAILED* [8024500C] SLS sync failed during service registration
+                             20:57:44.580  *FAILED* [80248014] Failed to execute service registration call
+                           0x8024500C = WU_E_REDIRECTOR_CONNECT_POLICY, gefaald in 2,3 ms zonder enige
+                           netwerk-I/O - een pure policy-shortcircuit.
+                     Netto: geen baat, alleen schade. Niet opnieuw toevoegen zonder nieuw bewijs. -->
                 <RunSynchronousCommand wcm:action="add">
                     <Order>5</Order>
                     <Path>cmd /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoUpdate /t REG_DWORD /d 1 /f</Path>
                     <Description>Disable Auto Update during Setup</Description>
+                </RunSynchronousCommand>
+                <!-- Sla de netwerkvereiste-check in OOBE volledig over i.p.v. te pollen en te timeouten -->
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>6</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+                    <Description>Bypass OOBE Network Requirement Check</Description>
+                </RunSynchronousCommand>
+                <!-- GETEST 2026-08-10 op Win11 25H2: dit lost het "checking for updates" OOBE-scherm
+                     NIET op - beide voorkomens (voor en na accountaanmaak) bleven bestaan. Community-
+                     claim dat dit het scherm onderdrukt is dus onjuist. Blijft staan als legitieme
+                     debloat-instelling (Start Menu / Spotlight content), niet als fix voor OOBE. -->
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>7</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent" /v DisableCloudOptimizedContent /t REG_DWORD /d 1 /f</Path>
+                    <Description>Disable Cloud Optimized Content (debloat only - does NOT fix OOBE update screen)</Description>
+                </RunSynchronousCommand>
+
+                <!-- FAIL-FAST WINDOWS UPDATE - BEVESTIGD WERKEND op 2026-08-11.
+                     Deze VM draait ALTIJD met internet (debloat/firstlogon downloaden software), dus de
+                     OOBE update-scan zou anders de echte Microsoft-endpoints bereiken en daadwerkelijk
+                     updates zoeken en downloaden. Door WU naar een dode WSUS op loopback te wijzen krijgt
+                     de TCP-connect direct een weigering en kapt de scan af.
+                     Gemeten resultaat uit de gedecodeerde WU-trace:
+                       20:59:05  Got WSUS Client/Server URL: "http://127.0.0.1:8530/ClientWebService/client.asmx"
+                       20:59:18  *FAILED* [80240438] StartCategoryScan failed
+                       20:59:18  ScanQOS ... ScanResult = 148, ScanDurationInSeconds = 14
+                     14 seconden in plaats van een volledige scan + download. Het OOBE-scherm zelf blijft
+                     wel zichtbaar (~30-45 s CXH-UI) - dat is niet te onderdrukken, zie Order 1.
+                     LET OP: firstlogon.ps1 stap 8 verwijdert deze waarden weer, anders blijft Windows
+                     Update permanent kapot op de geinstalleerde machine. -->
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>8</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" /v WUServer /t REG_SZ /d http://127.0.0.1:8530 /f</Path>
+                    <Description>Point WU at dead loopback WSUS (fail fast instead of timing out)</Description>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>9</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" /v WUStatusServer /t REG_SZ /d http://127.0.0.1:8530 /f</Path>
+                    <Description>WSUS status server (same dead loopback endpoint)</Description>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>10</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" /v UpdateServiceUrlAlternate /t REG_SZ /d http://127.0.0.1:8530 /f</Path>
+                    <Description>Alternate update service URL (same dead loopback endpoint)</Description>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>11</Order>
+                    <Path>cmd /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v UseWUServer /t REG_DWORD /d 1 /f</Path>
+                    <Description>Force use of the WSUS endpoint above</Description>
                 </RunSynchronousCommand>
             </RunSynchronous>
         </component>
@@ -175,6 +238,44 @@
             </OOBE>
             <!-- Tijdzone -->
             <TimeZone>W. Europe Standard Time</TimeZone>
+
+            <!-- VANGNET: de Windows Update-blokkade weer opheffen.
+                 De specialize-pass hierboven (Orders 5 en 8-11) schrijft PERSISTENTE HKLM-policies
+                 die WU naar een dode WSUS op loopback wijzen. Worden die niet verwijderd, dan krijgt
+                 de machine NOOIT meer een update - elke check faalt met 0x80240438.
+                 firstlogon.ps1 stap 0 doet dit ook, maar dat script zit in sources\$OEM$\ en dat pad
+                 kan ontbreken: iemand die alleen autounattend.xml handmatig in een gemounte ISO zet
+                 krijgt anders het gif zonder het tegengif. FirstLogonCommands reist mee in dit
+                 bestand zelf en is daarmee niet afhankelijk van $OEM$, SetupComplete of de
+                 scheduled task. Beide routes zijn idempotent; ze mogen allebei draaien.
+                 Bij aanpassing: Orders 8-11 hierboven en dit blok horen altijd samen gewijzigd. -->
+            <FirstLogonCommands>
+                <SynchronousCommand wcm:action="add">
+                    <Order>1</Order>
+                    <CommandLine>cmd /c reg delete HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate /v WUServer /f &gt;nul 2&gt;&amp;1 &amp; exit /b 0</CommandLine>
+                    <Description>Remove loopback WSUS redirect (WUServer)</Description>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <Order>2</Order>
+                    <CommandLine>cmd /c reg delete HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate /v WUStatusServer /f &gt;nul 2&gt;&amp;1 &amp; exit /b 0</CommandLine>
+                    <Description>Remove loopback WSUS redirect (WUStatusServer)</Description>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <Order>3</Order>
+                    <CommandLine>cmd /c reg delete HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate /v UpdateServiceUrlAlternate /f &gt;nul 2&gt;&amp;1 &amp; exit /b 0</CommandLine>
+                    <Description>Remove loopback WSUS redirect (UpdateServiceUrlAlternate)</Description>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <Order>4</Order>
+                    <CommandLine>cmd /c reg delete HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU /v UseWUServer /f &gt;nul 2&gt;&amp;1 &amp; exit /b 0</CommandLine>
+                    <Description>Stop forcing the WSUS endpoint</Description>
+                </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <Order>5</Order>
+                    <CommandLine>cmd /c reg delete HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU /v NoAutoUpdate /f &gt;nul 2&gt;&amp;1 &amp; exit /b 0</CommandLine>
+                    <Description>Re-enable automatic updates</Description>
+                </SynchronousCommand>
+            </FirstLogonCommands>
         </component>
 
         <!-- Regio en toetsenbord in de OOBE/Windows omgeving -->
