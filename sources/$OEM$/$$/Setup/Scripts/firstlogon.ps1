@@ -2,17 +2,35 @@ $logPath = "$env:USERPROFILE\debloat-firstlogon.log"
 "$(Get-Date) First-logon script started" | Out-File $logPath -Append
 
 # -----------------------------------------------------------------------------
-# Helper: explorer geordend herstarten (gebruikt door stap 7)
+# Helper: explorer herstarten (gebruikt door stap 7)
 # -----------------------------------------------------------------------------
+# GESCHIEDENIS - niet opnieuw "verbeteren" zonder dit te lezen.
+#
+# Op 2026-08-12 heb ik dit eerst vervangen door een nette afsluiting via
+# WM_USER+436 naar Shell_TrayWnd, om de Winlogon 1002 "shell stopped
+# unexpectedly" uit het event log te houden. Dat was een verkeerde ruil en het
+# brak de herstart: het afsluiten lukte, maar de shell kwam niet meer terug.
+#
+#   17:56:26  Shell closed gracefully via WM_USER+436
+#   17:57:13  WARN: shell did not reappear within 45s
+#
+# Oorzaak: na WM_USER+436 herstart Windows de shell NIET zelf, en de guard die
+# hem dan handmatig moest starten eiste dat er geen enkel explorer.exe-proces
+# meer draaide. Open Verkenner-vensters (en het afbouwende shell-proces) maken
+# die voorwaarde vrijwel altijd onwaar, dus de start werd overgeslagen en de
+# gebruiker moest via Taakbeheer ingrijpen.
+#
+# Stop-Process -Force werkt wel: dat triggert AutoRestartShell (standaard aan),
+# waarna Winlogon de shell zelf terugbrengt. De prijs is een cosmetische regel
+# in het event log. Dat is het waard.
 function Restart-ShellCleanly {
     param(
         [Parameter(Mandatory)][string]$LogPath,
-        [int]$ShutdownTimeoutSeconds = 15,
-        [int]$StartupTimeoutSeconds  = 45
+        [int]$StartupTimeoutSeconds = 45
     )
 
-    # P/Invoke voor FindWindow + PostMessage. De type-guard voorkomt een fout als deze
-    # functie ooit twee keer in dezelfde sessie wordt aangeroepen (Add-Type gooit dan).
+    # P/Invoke alleen nog om te KUNNEN CONTROLEREN of de taakbalk terug is.
+    # De type-guard voorkomt een fout als deze functie twee keer wordt aangeroepen.
     if (-not ('Win11Debloat.ShellControl' -as [type])) {
         Add-Type -ErrorAction Stop -TypeDefinition @'
 using System;
@@ -21,10 +39,6 @@ namespace Win11Debloat {
     public static class ShellControl {
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     }
 }
 '@
@@ -32,40 +46,11 @@ namespace Win11Debloat {
 
     function Get-TrayHandle { [Win11Debloat.ShellControl]::FindWindow('Shell_TrayWnd', $null) }
 
-    $graceful = $false
-    $tray = Get-TrayHandle
+    Stop-Process -Name "explorer" -Force -ErrorAction SilentlyContinue
+    "$(Get-Date) Shell killed, waiting for AutoRestartShell to bring it back..." | Out-File $LogPath -Append
 
-    if ($tray -ne [IntPtr]::Zero) {
-        # WM_USER+436. Explorer sluit hierop geordend af en herstart NIET vanzelf,
-        # in tegenstelling tot een force-kill (die AutoRestartShell triggert).
-        [void][Win11Debloat.ShellControl]::PostMessage($tray, 0x5B4, [IntPtr]::Zero, [IntPtr]::Zero)
-
-        $waited = 0
-        while ($waited -lt $ShutdownTimeoutSeconds) {
-            Start-Sleep -Milliseconds 500
-            $waited += 0.5
-            if ((Get-TrayHandle) -eq [IntPtr]::Zero) { $graceful = $true; break }
-        }
-    }
-
-    if ($graceful) {
-        "$(Get-Date) Shell closed gracefully via WM_USER+436" | Out-File $LogPath -Append
-    } else {
-        # Fallback: force-kill. Windows herstart de shell dan zelf via AutoRestartShell,
-        # dus hieronder NIET nog eens expliciet starten - dat zou een losse
-        # Verkenner-venster openen in plaats van de shell.
-        "$(Get-Date) WARN: graceful shell exit did not complete, falling back to force-kill" | Out-File $LogPath -Append
-        Stop-Process -Name "explorer" -Force -ErrorAction SilentlyContinue
-    }
-
-    # Alleen zelf starten als er echt geen shell meer draait.
-    Start-Sleep -Seconds 1
-    if ((Get-TrayHandle) -eq [IntPtr]::Zero -and -not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
-        Start-Process -FilePath "$env:WINDIR\explorer.exe" -ErrorAction SilentlyContinue
-    }
-
-    # Wachten tot de taakbalk er weer staat, zodat de rest van het script niet doorloopt
-    # terwijl de gebruiker naar een leeg bureaublad kijkt.
+    # Wachten tot de taakbalk er weer staat, zodat de rest van het script niet
+    # doorloopt terwijl de gebruiker naar een leeg bureaublad kijkt.
     $waited = 0
     while ($waited -lt $StartupTimeoutSeconds) {
         if ((Get-TrayHandle) -ne [IntPtr]::Zero) {
@@ -76,7 +61,23 @@ namespace Win11Debloat {
         $waited += 0.5
     }
 
-    "$(Get-Date) WARN: shell did not reappear within ${StartupTimeoutSeconds}s" | Out-File $LogPath -Append
+    # Laatste redmiddel. Komt AutoRestartShell om welke reden dan ook niet opdagen,
+    # dan is een handmatige start beter dan de gebruiker met een leeg scherm laten
+    # zitten. Dit is precies de vangnet-stap die op 2026-08-12 ontbrak.
+    "$(Get-Date) WARN: shell did not return within ${StartupTimeoutSeconds}s, starting explorer.exe manually" | Out-File $LogPath -Append
+    Start-Process -FilePath "$env:WINDIR\explorer.exe" -ErrorAction SilentlyContinue
+
+    $waited = 0
+    while ($waited -lt 20) {
+        if ((Get-TrayHandle) -ne [IntPtr]::Zero) {
+            "$(Get-Date) Shell is back after manual start" | Out-File $LogPath -Append
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+        $waited += 0.5
+    }
+
+    "$(Get-Date) ERROR: shell could not be restored - user may need to start explorer.exe from Task Manager" | Out-File $LogPath -Append
     return $false
 }
 
@@ -142,20 +143,32 @@ function Start-ProcessBounded {
         [Parameter(Mandatory)][string]$LogPath
     )
 
+    # Geeft een object terug in plaats van een kaal getal. Reden: Start-Process -PassThru
+    # levert in PowerShell 5.1 lang niet altijd een bruikbare ExitCode op - die kan $null
+    # zijn terwijl het proces gewoon netjes klaar is. Een kale $null-return maakte
+    # "afgekapt", "kon niet starten" en "klaar, code onbekend" ononderscheidbaar, en dat
+    # leverde op 2026-08-12 een valse "installer timed out" op terwijl SetupToolbox
+    # probleemloos was geinstalleerd.
+    $result = [pscustomobject]@{ Started = $false; TimedOut = $false; ExitCode = $null }
+
     try {
         $params = @{ FilePath = $FilePath; PassThru = $true; NoNewWindow = $true }
         if ($ArgumentList.Count -gt 0) { $params.ArgumentList = $ArgumentList }
         $proc = Start-Process @params -ErrorAction Stop
+        $result.Started = $true
 
         if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
             "$(Get-Date) WARN: $FilePath exceeded ${TimeoutSeconds}s, terminating" | Out-File $LogPath -Append
             try { $proc.Kill() } catch { }
-            return $null
+            $result.TimedOut = $true
+            return $result
         }
-        return $proc.ExitCode
+
+        try { $result.ExitCode = $proc.ExitCode } catch { }
+        return $result
     } catch {
         "$(Get-Date) WARN: could not start $FilePath - $($_.Exception.Message)" | Out-File $LogPath -Append
-        return $null
+        return $result
     }
 }
 
@@ -333,14 +346,19 @@ try {
     $installExit = Start-ProcessBounded -FilePath $installerPath -ArgumentList @("/silent") -TimeoutSeconds 300 -LogPath $logPath
     Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue
 
-    # Niet blind "installed successfully" loggen: dat maakte het log onbruikbaar om te
-    # controleren of het echt gelukt was.
-    if ($installExit -eq 0) {
+    # Niet blind "installed successfully" loggen, maar ook geen valse alarmen: een
+    # ontbrekende exitcode is geen mislukking. Stap 4b hieronder zoekt de geinstalleerde
+    # .exe op en is de echte bevestiging.
+    if (-not $installExit.Started) {
+        "$(Get-Date) WARN: SetupToolbox installer could not be started" | Out-File $logPath -Append
+    } elseif ($installExit.TimedOut) {
+        "$(Get-Date) WARN: SetupToolbox installer timed out after 300s and was terminated" | Out-File $logPath -Append
+    } elseif ($null -eq $installExit.ExitCode) {
+        "$(Get-Date) SetupToolbox installer finished (exit code not reported by Windows)" | Out-File $logPath -Append
+    } elseif ($installExit.ExitCode -eq 0) {
         "$(Get-Date) SetupToolbox installed successfully (exit 0)" | Out-File $logPath -Append
-    } elseif ($null -eq $installExit) {
-        "$(Get-Date) WARN: SetupToolbox installer timed out or could not be started" | Out-File $logPath -Append
     } else {
-        "$(Get-Date) WARN: SetupToolbox installer returned exit code $installExit" | Out-File $logPath -Append
+        "$(Get-Date) WARN: SetupToolbox installer returned exit code $($installExit.ExitCode)" | Out-File $logPath -Append
     }
 
     # 4b) Create a Public Desktop shortcut - /silent clearly skips whatever normally creates one.
@@ -462,18 +480,10 @@ try {
     Get-ChildItem -Path $taskbarPath -Filter "*Edge*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
     # Explorer moet herstarten voordat het opheffen van de lock zichtbaar wordt.
-    #
-    # NIET met Stop-Process -Force: dat gaat via het crash-pad, laat een Winlogon 1002
-    # "The shell stopped unexpectedly" in het event log achter, en de gebruiker ziet zijn
-    # bureaublad wegvallen zonder dat iets bewaakt of het terugkomt. In de run van
-    # 2026-08-11 gebeurde dat om 21:05:22.
-    #
-    # In plaats daarvan de nette route: WM_USER+436 (0x5B4) naar Shell_TrayWnd. Dat is het
-    # bericht dat Windows zelf gebruikt voor Ctrl+Shift+rechtsklik > "Exit Explorer";
-    # explorer sluit zichzelf dan geordend af en slaat zijn state op. Daarna starten we hem
-    # expliciet en wachten tot de taakbalk er weer staat, zodat de rest van dit script niet
-    # doorloopt terwijl er geen shell is.
-    Restart-ShellCleanly -LogPath $logPath
+    # Zie de uitgebreide toelichting bij Restart-ShellCleanly bovenaan dit script -
+    # de "nette" WM_USER+436 route is geprobeerd en bleek de shell niet terug te
+    # brengen. Force-kill + AutoRestartShell werkt wel.
+    Restart-ShellCleanly -LogPath $logPath | Out-Null
 
     "$(Get-Date) Layout policy lock released, taskbar remains Edge/Store-free and is now user-editable" | Out-File $logPath -Append
 } catch {
