@@ -46,7 +46,7 @@ launcher.ps1  -> debloat.ps1                                 |
         |                                                    |
         v                                                    |
 firstlogon.ps1  --user context, AtLogOn scheduled task--------+
-  (Windows Update un-gate, network wait, Firefox via winget,
+  (Windows Update un-gate, wait for internet, Firefox via winget,
    SetupToolbox, keyboard layout, taskbar unlock)
 ```
 
@@ -59,10 +59,11 @@ firstlogon.ps1  --user context, AtLogOn scheduled task--------+
   disables telemetry/ads/Recall/Copilot policies, removes OneDrive, locks a Store/Edge-free
   taskbar layout, and registers the first-logon scheduled task.
 - **`firstlogon.ps1`** (user context, runs once at first logon) — lifts the Windows Update
-  block *first* (see [Windows Update gate](#the-windows-update-gate) below), waits for real
-  network+DNS, installs Firefox via `winget`, installs SetupToolbox, forces a single
-  US-International keyboard layout, unlocks the taskbar for editing, and unregisters its own
-  scheduled task when done. Logs to `%USERPROFILE%\debloat-firstlogon.log`.
+  block *first* (see [Windows Update gate](#the-windows-update-gate) below), waits for a real
+  internet connection (see [Waiting for the network](#waiting-for-the-network) below), installs
+  Firefox via `winget`, installs SetupToolbox, forces a single US-International keyboard layout,
+  unlocks the taskbar for editing, and unregisters its own scheduled task when done. Logs to
+  `%USERPROFILE%\debloat-firstlogon.log`.
 - **`launcher.ps1`** just runs the staged `debloat.ps1` — it used to fetch a copy from GitHub
   first; that's gone, see [Security notes](#security-notes).
 
@@ -114,6 +115,33 @@ install, and the conclusion is that **neither screen can be suppressed** on 25H2
   ~2 minutes was never identified.
 
 Full writeup, including what was tried and disproved, is in `ROADMAP.md`.
+
+## Waiting for the network
+
+Firefox (`winget`) and SetupToolbox both need internet, and on a laptop there is none at first
+logon: nobody has picked a Wi-Fi network yet. Step 1 of `firstlogon.ps1` therefore waits, and
+the waiting is deliberately visible.
+
+- **It waits up to 10 minutes** (`$NetworkWaitSeconds`) and continues the *instant* a
+  connection appears, so a wired machine still only loses a few seconds. This replaces a flat
+  90-second wait that was routinely over before the user had even reached the desktop.
+- **"Ready" means DNS *and* reachability**, not just link state. Reachability is a ping to
+  `1.1.1.1` with an HTTP fallback to Microsoft's NCSI endpoint, because plenty of guest and
+  corporate networks drop ICMP — a ping-only check would sit out the full timeout on a network
+  that works fine. `api.github.com` is deliberately not used as the probe: its 60-requests-per-hour
+  anonymous limit is needed for the release lookup in step 4.
+- **After 20 seconds without a connection** (`$NetworkPromptAfterSeconds`) the user gets a
+  top-of-screen window explaining that setup is waiting for internet, with a live countdown,
+  and the Windows network picker opens if the machine has a wireless adapter. The window runs
+  in its own process and closes itself when a connection appears, when the countdown ends, or
+  if the main script disappears — the script never depends on it.
+- **If the wait runs out**, Firefox and SetupToolbox are skipped *and the scheduled task is
+  kept*, so the next logon tries again — up to `$MaxFirstLogonRuns` (3) runs, after which it
+  unregisters and logs that both need installing by hand. Every step is idempotent, so a repeat
+  run is safe; the Explorer restart in step 7 is skipped on repeats so the desktop doesn't
+  flash at every logon.
+
+The Windows Update gate removal never waits for any of this — it is step 0 and runs first.
 
 ## Building the ISO
 
@@ -178,10 +206,11 @@ runs the script that was staged into its own ISO.
 - **The two OOBE update screens cannot be suppressed** — see
   [above](#the-oobe-update-screens-themselves--not-fixable). This isn't a bug to keep
   chasing; it's a documented dead end.
-- **`firstlogon.ps1` assumes internet access.** Firefox (`winget`) and SetupToolbox both need
-  it. If the network genuinely isn't available at first logon, those two steps log a warning
-  and skip themselves — the Windows Update gate removal (the part that actually matters for
-  long-term machine health) does not depend on network and always runs first.
+- **`firstlogon.ps1` still needs internet eventually.** It now waits for it and retries at the
+  next logon instead of silently skipping (see [Waiting for the network](#waiting-for-the-network)),
+  but a machine that never gets a connection still ends up without Firefox and SetupToolbox.
+  The log says so explicitly when that happens. The Windows Update gate removal (the part that
+  actually matters for long-term machine health) does not depend on network and always runs first.
 - **No automated test suite.** Every change here should be validated with a real install in a
   VM. `%USERPROFILE%\debloat-firstlogon.log` (user-context steps) and
   `%WINDIR%\Panther\debloat.log` (SYSTEM-context steps, captured by `SetupComplete.cmd`) are

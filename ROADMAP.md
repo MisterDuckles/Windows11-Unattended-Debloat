@@ -11,6 +11,7 @@
 - [x] **SetupToolbox & MAS Integration:** Snelkoppelingen naar SetupToolbox en MAS op het `Public` bureaublad plaatsen.
 - [x] **OneDrive Cleanup:** Per-user OneDrive installer definitief uitschakelen bij logon.
 - [x] **First-logon scripting:** Los `firstlogon.ps1` script aangemaakt voor eerste-inlog automatisering en onderhoud.
+- [x] **Wachten op netwerk (laptops zonder kabel):** `firstlogon.ps1` wacht tot 10 minuten op een echte internetverbinding (DNS + bereikbaarheid, ICMP-onafhankelijk), toont na 20 seconden een venster met aftelklok plus de Windows-netwerkkiezer, en gaat verder zodra er verbinding is. Lukt het niet binnen de wachttijd, dan blijven Firefox en SetupToolbox liggen en blijft de scheduled task staan voor een nieuwe poging bij de volgende inlog (max. 3 runs). Vervangt de vaste wachttijd van 90 seconden, die op een laptop altijd te vroeg afliep.
 
 ## Fase 3: Windows Tweaks, OOBE Clean-up & Taskbar (In-depth Fine-tuning)
 - [~] **OOBE Update Bypass:** *Niet haalbaar gebleken — zie [Onderzoek: OOBE update-schermen](#onderzoek-oobe-update-schermen).* `DisableOOBEUpdate` wordt op 25H2 niet gehonoreerd. De scan is wél teruggebracht van een volledige download naar 14 seconden.

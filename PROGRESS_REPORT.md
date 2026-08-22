@@ -1,8 +1,8 @@
 # PROGRESS_REPORT: Windows 11 Unattended Setup
 
 ## Huidige Status
-- **Status:** OOBE-onderzoek afgesloten, robuustheidsronde doorgevoerd. Klaar om te testen.
-- **Laatst bijgewerkt:** 2026-08-12
+- **Status:** OOBE-onderzoek afgesloten, robuustheidsronde doorgevoerd, netwerk-wachtlus toegevoegd. Klaar om te testen.
+- **Laatst bijgewerkt:** 2026-08-22
 
 ---
 
@@ -15,6 +15,7 @@
 - `firstlogon.ps1` forceert nu de toetsenbordtaal naar enkel US-International (`0409:00020409`) en unpint de Microsoft Store van de taakbalk
 - Bing Search in het Startmenu en reclame/gesponsorde suggesties definitief uitgeschakeld via `debloat.ps1`.
 - Fase 3 afgerond (Hibernation behouden, Contextmenu overgeslagen).
+- **2026-08-22:** `firstlogon.ps1` wacht nu op internet in plaats van na 90 seconden door te denderen. Op een laptop zonder kabel was die wachttijd altijd al voorbij voordat de gebruiker wifi had kunnen aanzetten, waarna Firefox en SetupToolbox stil werden overgeslagen. Nu: maximaal 10 minuten wachten (stopt zodra er verbinding is), na 20 seconden een wachtvenster met aftelklok plus de Windows-netwerkkiezer, en bij een mislukte run blijft de scheduled task staan zodat de volgende inlog het opnieuw probeert (max. 3 runs). De internet-check gebruikt DNS + ping met HTTP-fallback, zodat netwerken die ICMP blokkeren niet ten onrechte als "offline" gelden.
 
 
 ---

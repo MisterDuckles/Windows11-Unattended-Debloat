@@ -2,6 +2,29 @@ $logPath = "$env:USERPROFILE\debloat-firstlogon.log"
 "$(Get-Date) First-logon script started" | Out-File $logPath -Append
 
 # -----------------------------------------------------------------------------
+# Instellingen
+# -----------------------------------------------------------------------------
+# Hoe lang dit script maximaal op internet wacht voordat het de netwerk-stappen
+# overslaat. Tot 2026-08-22 stond hier 90 seconden. Dat is genoeg voor een bekabelde
+# machine, maar niet voor een laptop: die heeft na de eerste inlog nog geen wifi en de
+# gebruiker moet eerst zelf een netwerk kiezen. De 90 seconden waren dan al voorbij.
+# Ruimer wachten kost niets op een bekabelde machine - de lus stopt zodra er verbinding is.
+$NetworkWaitSeconds = 600
+
+# Na hoeveel seconden zonder verbinding we de gebruiker een venster tonen met de vraag om
+# wifi aan te zetten. Kort genoeg om niet te laat te komen, lang genoeg om op een normale
+# bekabelde machine helemaal nooit te verschijnen.
+$NetworkPromptAfterSeconds = 20
+
+# Hoe vaak we opnieuw testen terwijl we wachten.
+$NetworkPollSeconds = 5
+
+# Hoe vaak dit script in totaal mag draaien als de netwerk-stappen niet lukten. Mislukken ze,
+# dan blijft de scheduled task staan zodat de volgende inlog het opnieuw probeert; deze teller
+# voorkomt dat dat eeuwig doorgaat op een machine die structureel geen internet krijgt.
+$MaxFirstLogonRuns = 3
+
+# -----------------------------------------------------------------------------
 # Helper: explorer herstarten (gebruikt door stap 7)
 # -----------------------------------------------------------------------------
 # GESCHIEDENIS - niet opnieuw "verbeteren" zonder dit te lezen.
@@ -172,6 +195,242 @@ function Start-ProcessBounded {
     }
 }
 
+# -----------------------------------------------------------------------------
+# Helper: is er echt bruikbaar internet?
+# -----------------------------------------------------------------------------
+# Wat de rest van dit script nodig heeft is geen "link up", maar naamresolutie plus een
+# werkende verbinding naar buiten. Daarom testen we precies dat, en DNS als eerste: zonder
+# netwerk faalt die meteen, dus dat is de goedkoopste manier om "nog niets" vast te stellen.
+#
+# ICMP is bewust NIET de enige test. Veel bedrijfs- en gastnetwerken blokkeren ping. Met alleen
+# een ping-check zou dit script op zo'n netwerk de volledige wachttijd uitzitten en daarna
+# Firefox en SetupToolbox overslaan, terwijl er gewoon internet was.
+function Test-InternetReady {
+    # 1) Naamresolutie. Resolve-DnsName zit in de DnsClient-module; is die om wat voor reden dan
+    #    ook niet beschikbaar, val dan terug op de .NET-resolver in plaats van ten onrechte
+    #    "geen internet" te concluderen.
+    try {
+        if (Get-Command Resolve-DnsName -ErrorAction SilentlyContinue) {
+            $null = Resolve-DnsName -Name "github.com" -ErrorAction Stop
+        } else {
+            $null = [System.Net.Dns]::GetHostEntry("github.com")
+        }
+    } catch {
+        return $false
+    }
+
+    # 2) Bereikbaarheid. Ping is de snelle route...
+    if (Test-Connection -ComputerName "1.1.1.1" -Count 1 -Quiet -ErrorAction SilentlyContinue) {
+        return $true
+    }
+
+    # ...en als ping geblokkeerd is, de NCSI-endpoint die Windows zelf gebruikt om te bepalen of
+    # er internet is. Bewust niet api.github.com: die staat op 60 anonieme requests per uur en dat
+    # quotum hebben we in stap 4 nodig voor de release-lookup.
+    try {
+        $probe = Invoke-WebRequest -Uri "http://www.msftconnecttest.com/connecttest.txt" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        return ($probe.StatusCode -eq 200)
+    } catch {
+        return $false
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Helper: wachtvenster voor de gebruiker
+# -----------------------------------------------------------------------------
+# Dit script draait als scheduled task met -WindowStyle Hidden. Zonder dit venster ziet iemand op
+# een laptop zonder kabel dus helemaal niets: geen melding, geen voortgang, alleen een bureaublad
+# waar niets gebeurt - en achteraf ontbreken Firefox en SetupToolbox zonder dat duidelijk is
+# waarom. Wachten op wifi heeft alleen zin als de gebruiker weet dat er gewacht wordt.
+#
+# Het venster draait in een APART proces, niet in een runspace binnen dit script. Reden: zo kan een
+# fout in de UI dit script nooit meesleuren, en is afsluiten een simpele kill. Het kind sluit
+# zichzelf ook af zodra de deadline verstrijkt of dit script wegvalt (het bewaakt de parent-PID),
+# zodat er nooit een weesvenster op het bureaublad achterblijft.
+function Show-NetworkPrompt {
+    param(
+        [Parameter(Mandatory)][datetime]$Deadline,
+        [Parameter(Mandatory)][string]$LogPath
+    )
+
+    # Letterlijke here-string met placeholders in plaats van een interpolerende: in een
+    # interpolerende here-string zou elke $-variabele van het kindscript hier al worden ingevuld,
+    # en dat is precies het soort fout dat je pas in een VM ontdekt.
+    $template = @'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$parentPid = __PARENTPID__
+$deadline  = [datetime]::FromFileTime(__DEADLINE__)
+
+$form                 = New-Object System.Windows.Forms.Form
+$form.Text            = "Windows wordt nog ingericht"
+$form.ClientSize      = New-Object System.Drawing.Size(560, 200)
+$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+$form.MaximizeBox     = $false
+$form.MinimizeBox     = $false
+$form.TopMost         = $true
+$form.StartPosition   = [System.Windows.Forms.FormStartPosition]::Manual
+
+# Bewust bovenaan het scherm en niet gecentreerd: de wifi-flyout van Windows opent rechtsonder en
+# dit venster staat altijd bovenop. Ze mogen elkaar niet in de weg zitten.
+$area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$form.Location = New-Object System.Drawing.Point([int](($area.Width - $form.Width) / 2), 60)
+
+$label           = New-Object System.Windows.Forms.Label
+$label.Dock      = [System.Windows.Forms.DockStyle]::Fill
+$label.Padding   = New-Object System.Windows.Forms.Padding(18)
+$label.Font      = New-Object System.Drawing.Font("Segoe UI", 10)
+$label.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+$form.Controls.Add($label)
+
+function Set-PromptText {
+    $left = $deadline - (Get-Date)
+    $mins = 0
+    $secs = 0
+    if ($left.TotalSeconds -gt 0) {
+        $mins = [int][math]::Floor($left.TotalMinutes)
+        $secs = $left.Seconds
+    }
+    $nl = [Environment]::NewLine
+    $label.Text = "De installatie wacht op een internetverbinding." + $nl + $nl +
+        "Sluit een netwerkkabel aan of maak verbinding met wifi." + $nl +
+        "Zodra er verbinding is gaat de installatie automatisch verder" + $nl +
+        "en sluit dit venster vanzelf." + $nl + $nl +
+        ("Nog {0} min {1:00} sec te gaan." -f $mins, $secs)
+}
+
+$timer          = New-Object System.Windows.Forms.Timer
+$timer.Interval = 1000
+$timer.Add_Tick({
+    if ((Get-Date) -ge $deadline) { $timer.Stop(); $form.Close(); return }
+    # Vangnet: valt het hoofdscript weg, dan verdwijnt dit venster mee. Anders blijft er een
+    # dialoog staan die nergens meer bij hoort.
+    if (-not (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) { $timer.Stop(); $form.Close(); return }
+    Set-PromptText
+})
+
+Set-PromptText
+$timer.Start()
+[void]$form.ShowDialog()
+'@
+
+    try {
+        $childScript = $template.Replace('__PARENTPID__', [string]$PID).Replace('__DEADLINE__', [string]$Deadline.ToFileTime())
+
+        # -EncodedCommand in plaats van een tijdelijk .ps1-bestand: geen rommel op schijf en geen
+        # afhankelijkheid van het execution policy-gedrag voor bestanden. EncodedCommand verwacht
+        # UTF-16LE, vandaar [Text.Encoding]::Unicode.
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childScript))
+
+        $startArgs = @{
+            FilePath     = "powershell.exe"
+            ArgumentList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded)
+            WindowStyle  = "Hidden"
+            PassThru     = $true
+            ErrorAction  = "Stop"
+        }
+        $proc = Start-Process @startArgs
+        "$(Get-Date) Network prompt shown to the user (PID $($proc.Id))" | Out-File $LogPath -Append
+        return $proc
+    } catch {
+        # Het venster is een hulpmiddel, geen voorwaarde. Lukt het niet, dan wachten we stil door.
+        "$(Get-Date) WARN: could not show the network prompt: $($_.Exception.Message)" | Out-File $LogPath -Append
+        return $null
+    }
+}
+
+function Close-NetworkPrompt {
+    param($Process)
+
+    if (-not $Process) { return }
+    try {
+        if (-not $Process.HasExited) { $Process.Kill() }
+    } catch { }
+}
+
+# -----------------------------------------------------------------------------
+# Helper: de netwerkkiezer van Windows openen
+# -----------------------------------------------------------------------------
+# Scheelt de gebruiker het zoeken naar het juiste icoontje. Alleen zinvol als er ook echt een
+# draadloze adapter in de machine zit; op een desktop met alleen een losgekoppelde kabel is de
+# netwerkkiezer openen misleidend.
+function Open-WirelessPicker {
+    param([Parameter(Mandatory)][string]$LogPath)
+
+    try {
+        $wireless = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object {
+            $_.InterfaceDescription -match 'Wi-?Fi|Wireless|WLAN|802\.11' -or $_.PhysicalMediaType -match '802\.11'
+        })
+        if ($wireless.Count -eq 0) {
+            "$(Get-Date) No wireless adapter present, not opening the network picker" | Out-File $LogPath -Append
+            return
+        }
+
+        # Via explorer.exe starten: deze taak draait met verhoogde rechten en een URI-handler laat
+        # zich vanuit een elevated proces niet betrouwbaar activeren. explorer geeft het door aan de
+        # gewone gebruikerssessie.
+        Start-Process -FilePath "explorer.exe" -ArgumentList "ms-availablenetworks:" -ErrorAction Stop
+        "$(Get-Date) Opened the Windows network picker" | Out-File $LogPath -Append
+    } catch {
+        "$(Get-Date) Could not open the network picker: $($_.Exception.Message)" | Out-File $LogPath -Append
+    }
+}
+
+# -----------------------------------------------------------------------------
+# Helper: wachten tot er internet is
+# -----------------------------------------------------------------------------
+# Geeft $true zodra er verbinding is, $false als de deadline verstrijkt. Op een bekabelde machine
+# kost dit een paar seconden; op een laptop krijgt de gebruiker na $PromptAfterSeconds een venster
+# te zien en daarna alle tijd om wifi aan te zetten.
+function Wait-ForInternet {
+    param(
+        [Parameter(Mandatory)][string]$LogPath,
+        [int]$TimeoutSeconds = 600,
+        [int]$PromptAfterSeconds = 20,
+        [int]$PollSeconds = 5
+    )
+
+    $start       = Get-Date
+    $deadline    = $start.AddSeconds($TimeoutSeconds)
+    $promptAt    = $start.AddSeconds($PromptAfterSeconds)
+    $prompt      = $null
+    $promptTried = $false
+
+    "$(Get-Date) Waiting for internet (DNS + reachability), max ${TimeoutSeconds}s..." | Out-File $LogPath -Append
+
+    try {
+        while ($true) {
+            if (Test-InternetReady) {
+                $waited = [int]((Get-Date) - $start).TotalSeconds
+                "$(Get-Date) Internet available after ${waited}s" | Out-File $LogPath -Append
+                Close-NetworkPrompt -Process $prompt
+                return $true
+            }
+
+            if ((Get-Date) -ge $deadline) { break }
+
+            # Het venster eerst, de netwerkkiezer daarna: het venster pakt bij het openen de focus
+            # en zou de flyout anders meteen weer dichtklappen.
+            if ((-not $promptTried) -and ((Get-Date) -ge $promptAt)) {
+                $promptTried = $true
+                "$(Get-Date) Still no internet, asking the user to connect..." | Out-File $LogPath -Append
+                $prompt = Show-NetworkPrompt -Deadline $deadline -LogPath $LogPath
+                Open-WirelessPicker -LogPath $LogPath
+            }
+
+            Start-Sleep -Seconds $PollSeconds
+        }
+    } catch {
+        "$(Get-Date) WARN: network wait aborted: $($_.Exception.Message)" | Out-File $LogPath -Append
+    }
+
+    Close-NetworkPrompt -Process $prompt
+    $waited = [int]((Get-Date) - $start).TotalSeconds
+    "$(Get-Date) WARN: still no internet after ${waited}s" | Out-File $LogPath -Append
+    return $false
+}
+
 # 0) Windows Update-blokkade METEEN opheffen.
 #
 # Dit stond vroeger als stap 8 helemaal onderaan, achter de netwerk-wait, winget en de
@@ -182,33 +441,27 @@ function Start-ProcessBounded {
 # Store hebben de un-gate nodig, want de loopback-WSUS blokkeert ook Store-acquisities.
 Remove-WindowsUpdateGate -LogPath $logPath | Out-Null
 
-# 1) Wachten tot de netwerkverbinding EN DNS-resolutie volledig actief zijn (max 90 sec)
-# Let op: pingen naar een letterlijk IP (1.1.1.1) bewijst alleen IP-bereikbaarheid, niet dat de
-# DNS-client al klaar is. Vlak na de allereerste inlog loopt DNS vaak een paar seconden achter op
-# de rest van de netwerkstack, waardoor github.com niet resolvet terwijl "de netwerk-check" al slaagde.
-try {
-    "$(Get-Date) Waiting for active network connection + DNS resolution..." | Out-File $logPath -Append
-    $maxWait = 90
-    $waited = 0
-    $networkReady = $false
-    $dnsReady = $false
-    while ($waited -lt $maxWait) {
-        if (-not $networkReady) {
-            $networkReady = [bool](Test-Connection -ComputerName "1.1.1.1" -Count 1 -Quiet -ErrorAction SilentlyContinue)
-        }
-        if ($networkReady -and -not $dnsReady) {
-            try {
-                if (Resolve-DnsName -Name "github.com" -ErrorAction Stop) { $dnsReady = $true }
-            } catch { $dnsReady = $false }
-        }
-        if ($networkReady -and $dnsReady) { break }
-        Start-Sleep -Seconds 3
-        $waited += 3
-    }
-    "$(Get-Date) Network ready: $networkReady, DNS ready: $dnsReady (waited ${waited}s)" | Out-File $logPath -Append
-} catch {
-    "$(Get-Date) Network check warning: $($_.Exception.Message)" | Out-File $logPath -Append
-}
+# 1) Wachten tot er echt internet is
+#
+# GESCHIEDENIS - hier stond tot 2026-08-22 een vaste wachttijd van 90 seconden.
+#
+# Dat werkt op een bekabelde machine, maar niet op een laptop. Die heeft na de eerste inlog nog
+# helemaal geen netwerk: de gebruiker moet eerst zelf wifi aanzetten en een netwerk kiezen. Tegen
+# de tijd dat dat gebeurd was, waren de 90 seconden voorbij en had het script Firefox en
+# SetupToolbox al stilletjes overgeslagen. De machine leek af en was het niet.
+#
+# Nu wachten we tot er verbinding is (standaard maximaal 10 minuten, zie $NetworkWaitSeconds) en
+# krijgt de gebruiker na 20 seconden een venster met de vraag om wifi aan te zetten. De lus stopt
+# zodra er verbinding is, dus op een bekabelde machine kost dit nog steeds maar enkele seconden.
+$internetReady = Wait-ForInternet -LogPath $logPath `
+                                  -TimeoutSeconds $NetworkWaitSeconds `
+                                  -PromptAfterSeconds $NetworkPromptAfterSeconds `
+                                  -PollSeconds $NetworkPollSeconds
+
+# Wordt $true zodra iets dat internet nodig had niet gelukt is. Het slot van dit script laat de
+# scheduled task dan staan, zodat de volgende inlog het opnieuw probeert - dan waarschijnlijk wel
+# met verbinding.
+$retryNeeded = -not $internetReady
 
 # 2) Remove OneDrive completely per-user
 try {
@@ -241,7 +494,9 @@ try {
     # geregistreerd zijn, of het pakket is uit de image gehaald. Zonder deze check draait de
     # regel eronder in een CommandNotFoundException die als "installation failed" wordt gelogd
     # zonder te zeggen dat winget zelf ontbrak.
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+    if (-not $internetReady) {
+        "$(Get-Date) SKIP: no internet, Firefox will be retried at the next logon" | Out-File $logPath -Append
+    } elseif (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         "$(Get-Date) WARN: winget not available at first logon, skipping Firefox" | Out-File $logPath -Append
     } else {
         "$(Get-Date) Installing Firefox via Winget..." | Out-File $logPath -Append
@@ -274,6 +529,10 @@ try {
         "$(Get-Date) Found staged SetupToolbox.exe, skipping network download" | Out-File $logPath -Append
         Copy-Item -Path $stagedInstaller -Destination $installerPath -Force
         $downloadSuccess = $true
+    } elseif (-not $internetReady) {
+        # Vijf downloadpogingen doen die per definitie moeten mislukken heeft geen zin. De task
+        # blijft staan, dus de volgende inlog probeert het opnieuw - dan hopelijk met verbinding.
+        "$(Get-Date) SKIP: no internet and no staged installer, SetupToolbox download not attempted" | Out-File $logPath -Append
     } else {
         "$(Get-Date) No staged installer found, resolving latest release via GitHub API..." | Out-File $logPath -Append
         [Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls13
@@ -339,7 +598,10 @@ try {
     }
 
     if (-not $downloadSuccess) {
-        throw "Download van SetupToolbox mislukt (geen staged installer en alle netwerk-pogingen faalden)."
+        if ($internetReady) {
+            throw "Download van SetupToolbox mislukt (geen staged installer en alle netwerk-pogingen faalden)."
+        }
+        throw "SetupToolbox overgeslagen: geen gestagede installer en geen internetverbinding."
     }
 
     "$(Get-Date) Executing SetupToolbox installer..." | Out-File $logPath -Append
@@ -422,6 +684,9 @@ try {
     }
 } catch {
     "$(Get-Date) SetupToolbox download/installation failed: $($_.Exception.Message)" | Out-File $logPath -Append
+    # SetupToolbox is de reden dat deze machines worden uitgerold; ontbreekt hij, dan is de
+    # installatie niet af. Volgende inlog opnieuw proberen - zie het slot van dit script.
+    $retryNeeded = $true
 }
 
 # 5) Create Public Desktop Shortcuts & Clean Up Edge Desktop Icons
@@ -470,8 +735,16 @@ try {
     "$(Get-Date) Releasing Start/Taskbar layout policy lock..." | Out-File $logPath -Append
 
     $explorerPolicyKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
-    Remove-ItemProperty -Path $explorerPolicyKey -Name "LockedStartLayout" -ErrorAction SilentlyContinue
-    Remove-ItemProperty -Path $explorerPolicyKey -Name "StartLayoutFile" -ErrorAction SilentlyContinue
+    # Eerst kijken of de lock er uberhaupt nog staat. Bij een herhaalde run - de task blijft staan
+    # zolang de netwerk-stappen niet gelukt zijn - is hij al weg, en dan hoeft explorer verderop
+    # ook niet opnieuw herstart te worden. Anders knippert het bureaublad bij elke inlog opnieuw.
+    $lockWasPresent = $false
+    foreach ($v in 'LockedStartLayout', 'StartLayoutFile') {
+        if ($null -ne (Get-ItemProperty -Path $explorerPolicyKey -Name $v -ErrorAction SilentlyContinue)) {
+            $lockWasPresent = $true
+        }
+        Remove-ItemProperty -Path $explorerPolicyKey -Name $v -ErrorAction SilentlyContinue
+    }
 
     # Legacy safety net: harmless no-op on modern Windows 11, but cheap insurance on older/LTSC builds
     # that still read the pre-Win11 Quick Launch taskbar pin folder.
@@ -483,7 +756,11 @@ try {
     # Zie de uitgebreide toelichting bij Restart-ShellCleanly bovenaan dit script -
     # de "nette" WM_USER+436 route is geprobeerd en bleek de shell niet terug te
     # brengen. Force-kill + AutoRestartShell werkt wel.
-    Restart-ShellCleanly -LogPath $logPath | Out-Null
+    if ($lockWasPresent) {
+        Restart-ShellCleanly -LogPath $logPath | Out-Null
+    } else {
+        "$(Get-Date) Layout policy lock was already gone, not restarting explorer" | Out-File $logPath -Append
+    }
 
     "$(Get-Date) Layout policy lock released, taskbar remains Edge/Store-free and is now user-editable" | Out-File $logPath -Append
 } catch {
@@ -496,6 +773,47 @@ try {
 # refresh). De functie is idempotent, dus twee keer draaien kost niets.
 Remove-WindowsUpdateGate -LogPath $logPath | Out-Null
 
-Unregister-ScheduledTask -TaskName "Debloat-FirstLogon" -Confirm:$false -ErrorAction SilentlyContinue
-"$(Get-Date) First-logon task removed" | Out-File $logPath -Append
+# 9) Afronden - of juist niet.
+#
+# De task afmelden mag alleen als alles wat internet nodig had ook echt gelukt is. Lukte dat niet
+# (laptop waarop nooit wifi is aangezet, GitHub onbereikbaar), dan laten we de task juist staan:
+# de trigger is AtLogOn, dus de volgende inlog probeert het opnieuw - dan waarschijnlijk wel met
+# verbinding. Alle stappen hierboven zijn idempotent, dus een tweede run is veilig.
+#
+# De teller voorkomt dat een machine die structureel geen internet krijgt bij elke inlog opnieuw
+# tien minuten staat te wachten met een venster in beeld.
+$stateKey = "HKCU:\Software\Win11Debloat"
+
+if (-not $retryNeeded) {
+    Unregister-ScheduledTask -TaskName "Debloat-FirstLogon" -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -Path $stateKey -Recurse -Force -ErrorAction SilentlyContinue
+    "$(Get-Date) First-logon task removed" | Out-File $logPath -Append
+} else {
+    # Teller in HKCU: deze taak draait in de context van de ingelogde gebruiker, dus daar is
+    # schrijven altijd toegestaan - ook als dat account geen beheerder blijkt te zijn.
+    $runCount  = $MaxFirstLogonRuns
+    $counterOk = $false
+    try {
+        if (-not (Test-Path $stateKey)) { New-Item -Path $stateKey -Force | Out-Null }
+        $previous = 0
+        $existing = Get-ItemProperty -Path $stateKey -Name "FirstLogonRuns" -ErrorAction SilentlyContinue
+        if ($existing) { $previous = [int]$existing.FirstLogonRuns }
+        $runCount = $previous + 1
+        Set-ItemProperty -Path $stateKey -Name "FirstLogonRuns" -Value $runCount -Type DWord -Force
+        $counterOk = $true
+    } catch {
+        "$(Get-Date) WARN: could not persist the retry counter: $($_.Exception.Message)" | Out-File $logPath -Append
+    }
+
+    # Lukt het bijhouden niet, dan stoppen we ermee in plaats van te gokken. Een teller die niet
+    # oploopt zou betekenen dat dit script bij ELKE inlog opnieuw tien minuten gaat staan wachten.
+    if ((-not $counterOk) -or ($runCount -ge $MaxFirstLogonRuns)) {
+        Unregister-ScheduledTask -TaskName "Debloat-FirstLogon" -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-Item -Path $stateKey -Recurse -Force -ErrorAction SilentlyContinue
+        "$(Get-Date) WARN: network steps still incomplete after $runCount run(s) - giving up, first-logon task removed" | Out-File $logPath -Append
+        "$(Get-Date) WARN: install Firefox and SetupToolbox by hand on this machine" | Out-File $logPath -Append
+    } else {
+        "$(Get-Date) Network steps incomplete (run $runCount of $MaxFirstLogonRuns) - task kept, retrying at next logon" | Out-File $logPath -Append
+    }
+}
 "$(Get-Date) === First-logon script finished ===" | Out-File $logPath -Append
