@@ -153,6 +153,57 @@ function Remove-WindowsUpdateGate {
 }
 
 # -----------------------------------------------------------------------------
+# Helper: beveiligingsvragen voor lokale accounts uitzetten
+# -----------------------------------------------------------------------------
+# Toegevoegd 2026-08-22 na een installatie op een echte laptop: wie tijdens OOBE een wachtwoord
+# koos, moest daarna alsnog drie beveiligingsvragen invullen.
+#
+# debloat.ps1 zette daarvoor "HideSecurityQuestionsFromLocalUsers". Die waardenaam bestaat niet -
+# hij staat in geen enkele ADMX en in geen enkele systeem-DLL, dus die regel deed nooit iets.
+# De echte policy heet NoLocalPasswordResetQuestions en staat in CredUI.admx:
+#   Computer Configuration > Administrative Templates > Windows Components > Credential User
+#   Interface > "Prevent the use of security questions for local accounts"
+#   key: Software\Policies\Microsoft\Windows\System   value: NoLocalPasswordResetQuestions (DWORD 1)
+#
+# WAAROM HIER EN NIET IN debloat.ps1 (dat draait VOOR OOBE):
+# de policy voor OOBE zetten is gerapporteerd als oorzaak van de OOBELOCAL-fout op de lokale-
+# accountpagina van Windows 11 24H2 - dan loopt de installatie vast op precies het scherm waar je
+# een account probeert te maken. Dat risico is deze winst niet waard. Na OOBE is de policy
+# onschadelijk en doet hij wat we willen: wie later in Instellingen een wachtwoord toevoegt of
+# wijzigt, krijgt geen vragenlijst meer.
+#
+# LET OP - dit haalt de vragen NIET weg uit het OOBE-scherm zelf. De enige betrouwbare manier om dat
+# scherm over te slaan is het account door autounattend.xml laten aanmaken; zie het UserAccounts-
+# blok in autounattend.xml en de README. Wie tijdens OOBE geen wachtwoord invult krijgt sowieso geen
+# vragen, en kan er dankzij deze policy daarna zonder vragenlijst alsnog een instellen.
+function Disable-LocalSecurityQuestions {
+    param([Parameter(Mandatory)][string]$LogPath)
+
+    try {
+        $key = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
+        if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+        New-ItemProperty -Path $key -Name "NoLocalPasswordResetQuestions" -Value 1 -PropertyType DWord -Force | Out-Null
+
+        # Opruimen: machines die met een ISO van voor 2026-08-22 zijn uitgerold hebben de
+        # niet-bestaande waarde in het register staan. Hij doet niets, maar hij suggereert wel dat
+        # dit geregeld is. Weg ermee, zodat het register vertelt wat er echt geldt.
+        Remove-ItemProperty -Path $key -Name "HideSecurityQuestionsFromLocalUsers" -ErrorAction SilentlyContinue
+
+        $check = Get-ItemProperty -Path $key -Name "NoLocalPasswordResetQuestions" -ErrorAction SilentlyContinue
+        if ($null -eq $check -or [int]$check.NoLocalPasswordResetQuestions -ne 1) {
+            "$(Get-Date) WARN: NoLocalPasswordResetQuestions could not be verified - security questions may still appear" | Out-File $LogPath -Append
+            return $false
+        }
+
+        "$(Get-Date) Security questions for local accounts disabled (NoLocalPasswordResetQuestions=1, verified)" | Out-File $LogPath -Append
+        return $true
+    } catch {
+        "$(Get-Date) WARN: could not disable local security questions: $($_.Exception.Message)" | Out-File $LogPath -Append
+        return $false
+    }
+}
+
+# -----------------------------------------------------------------------------
 # Helper: extern proces starten met een harde tijdslimiet
 # -----------------------------------------------------------------------------
 # Start-Process -Wait heeft geen timeout. Een installer die op een dialoog wacht of
@@ -440,6 +491,13 @@ function Wait-ForInternet {
 # draait, dus de blokkade heeft zijn werk al gedaan. Bijkomend voordeel: winget en de
 # Store hebben de un-gate nodig, want de loopback-WSUS blokkeert ook Store-acquisities.
 Remove-WindowsUpdateGate -LogPath $logPath | Out-Null
+
+# 0b) Beveiligingsvragen voor lokale accounts uitzetten.
+#
+# Staat vlak achter stap 0 en ver voor alles wat netwerk nodig heeft: het is een enkele
+# registerwaarde, hij kan niet blijven hangen, en hij moet ook gezet zijn op een machine waar de
+# rest van dit script later alsnog strandt op een ontbrekende internetverbinding.
+Disable-LocalSecurityQuestions -LogPath $logPath | Out-Null
 
 # 1) Wachten tot er echt internet is
 #

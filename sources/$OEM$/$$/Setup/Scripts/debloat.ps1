@@ -198,7 +198,25 @@ Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds" "EnableFe
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" "DODownloadMode" 99
 Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\wlidsvc" "Start" 4
 Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting" "Disabled" 1
-Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "HideSecurityQuestionsFromLocalUsers" 1
+# SECURITY QUESTIONS - BEWUST NIET HIER. Gewijzigd 2026-08-22.
+#
+# Hier stond tot 2026-08-22:
+#     Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "HideSecurityQuestionsFromLocalUsers" 1
+# Die waardenaam BESTAAT NIET in Windows. Nagemeten op een 25H2-machine (build 26200):
+#   - C:\Windows\PolicyDefinitions\CredUI.admx definieert de policy als
+#     key="Software\Policies\Microsoft\Windows\System" valueName="NoLocalPasswordResetQuestions"
+#   - de string "HideSecurityQuestionsFromLocalUsers" komt in geen enkele ADMX en in geen enkele
+#     systeem-DLL voor.
+# Het was dus een no-op: de drie beveiligingsvragen bleven bij elke installatie gewoon staan.
+#
+# De JUISTE waarde (NoLocalPasswordResetQuestions) wordt gezet in firstlogon.ps1 stap 0b, dus NA
+# OOBE. Bewust niet hier: dit script draait als SYSTEM VOOR OOBE, en die policy voor OOBE zetten is
+# precies het scenario dat op Windows 11 de lokale-accountpagina laat afbreken met de OOBELOCAL-fout
+# (gerapporteerd voor 24H2 via zowel unattend als group policy - zie README "Security questions").
+# Het levert bovendien in het gunstigste geval weinig op: de OOBE-pagina wisselt dan alleen de drie
+# vragen om voor een verplicht wachtwoord-HINT-veld. Te zien in CloudExperienceHost zelf,
+# webapps\inclusiveOobe\view\oobelocalaccount-main.html: het passwordHint-paneel wordt gerenderd
+# zodra isLocalSecurityQuestionResetAllowed false is.
 Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" "DisableOOBEUpdate" 1
 
 foreach ($serviceName in @("DiagTrack", "dmwappushservice", "wlidsvc", "WerSvc")) {

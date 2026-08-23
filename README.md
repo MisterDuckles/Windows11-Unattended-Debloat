@@ -46,8 +46,9 @@ launcher.ps1  -> debloat.ps1                                 |
         |                                                    |
         v                                                    |
 firstlogon.ps1  --user context, AtLogOn scheduled task--------+
-  (Windows Update un-gate, wait for internet, Firefox via winget,
-   SetupToolbox, keyboard layout, taskbar unlock)
+  (Windows Update un-gate, security questions off, wait for
+   internet, Firefox via winget, SetupToolbox, keyboard layout,
+   taskbar unlock)
 ```
 
 - **`autounattend.xml`** — disk wipe + partitioning, Windows 11 Pro image selection, regional
@@ -59,7 +60,9 @@ firstlogon.ps1  --user context, AtLogOn scheduled task--------+
   disables telemetry/ads/Recall/Copilot policies, removes OneDrive, locks a Store/Edge-free
   taskbar layout, and registers the first-logon scheduled task.
 - **`firstlogon.ps1`** (user context, runs once at first logon) — lifts the Windows Update
-  block *first* (see [Windows Update gate](#the-windows-update-gate) below), waits for a real
+  block *first* (see [Windows Update gate](#the-windows-update-gate) below), disables security
+  questions for local accounts (see
+  [Security questions](#security-questions-on-the-oobe-account-screen) below), waits for a real
   internet connection (see [Waiting for the network](#waiting-for-the-network) below), installs
   Firefox via `winget`, installs SetupToolbox, forces a single US-International keyboard layout,
   unlocks the taskbar for editing, and unregisters its own scheduled task when done. Logs to
@@ -201,6 +204,53 @@ Refreshing scripts now happens at build time instead (`-RefreshScripts`, above),
 visible, diffable, and testable before anything is rolled out. A deployed machine only ever
 runs the script that was staged into its own ISO.
 
+## Security questions on the OOBE account screen
+
+Create a local account during OOBE *with* a password and Windows demands three security
+questions. Leave the password empty and it doesn't. As of 2026-08-22 this repo handles that as
+follows — and the history matters, because the previous handling looked correct and did nothing.
+
+`debloat.ps1` used to set:
+
+```
+HKLM\SOFTWARE\Policies\Microsoft\Windows\System  HideSecurityQuestionsFromLocalUsers = 1
+```
+
+**That value name does not exist in Windows.** Checked on 25H2 (build 26200): it appears in no
+ADMX file and in no system DLL. The real policy is defined in `CredUI.admx` as
+
+```
+key:       Software\Policies\Microsoft\Windows\System
+valueName: NoLocalPasswordResetQuestions
+```
+
+(Computer Configuration → Administrative Templates → Windows Components → Credential User
+Interface → "Prevent the use of security questions for local accounts")
+
+So the setting was a no-op and the questions kept appearing on every install.
+
+**What happens now:** `firstlogon.ps1` step 0b sets the real value, verifies it, and deletes the
+bogus one left behind by older ISOs. That means the finished machine never asks security
+questions again — adding or changing a password in Settings afterwards goes straight through.
+
+**Why it is not set before OOBE.** Setting this policy in the `specialize` pass (or via group
+policy before sysprep) is widely reported to break the Windows 11 OOBE local-account page with
+an `OOBELOCAL` error — the install dies on exactly the screen where you're trying to make an
+account. Even when it does work, it doesn't remove the prompt: CloudExperienceHost's
+`oobelocalaccount-main.html` renders a mandatory password *hint* panel whenever
+`isLocalSecurityQuestionResetAllowed` is false. Three questions become one hint field. That
+trade is not worth the risk of a dead OOBE, so the policy lands after OOBE instead.
+
+**If you want the questions gone from OOBE itself**, there is exactly one reliable route: don't
+use the OOBE account page at all. `autounattend.xml` carries a ready-to-enable, commented-out
+`<UserAccounts><LocalAccounts>` block for that; set `HideLocalAccountScreen` to `true` alongside
+it. The price is that the account name is baked into the ISO instead of typed during setup —
+which is exactly why that block was removed back in commit f293b19, so it ships disabled.
+
+The practical middle ground, and what the defaults give you: type the account name at OOBE,
+leave the password blank (no questions), and set a password after first logon — where, thanks
+to step 0b, nobody asks you anything.
+
 ## Known limitations
 
 - **The two OOBE update screens cannot be suppressed** — see
@@ -211,6 +261,9 @@ runs the script that was staged into its own ISO.
   but a machine that never gets a connection still ends up without Firefox and SetupToolbox.
   The log says so explicitly when that happens. The Windows Update gate removal (the part that
   actually matters for long-term machine health) does not depend on network and always runs first.
+- **Security questions cannot be removed from the OOBE screen itself** without giving up
+  interactive account creation — see [above](#security-questions-on-the-oobe-account-screen).
+  They are gone everywhere else on the finished machine.
 - **No automated test suite.** Every change here should be validated with a real install in a
   VM. `%USERPROFILE%\debloat-firstlogon.log` (user-context steps) and
   `%WINDIR%\Panther\debloat.log` (SYSTEM-context steps, captured by `SetupComplete.cmd`) are

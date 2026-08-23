@@ -191,6 +191,44 @@
                 <ProtectYourPC>3</ProtectYourPC>
                 <UnattendEnableRetailDemo>false</UnattendEnableRetailDemo>
             </OOBE>
+            <!-- BEVEILIGINGSVRAGEN TIJDENS OOBE - lees dit voordat je hier iets verandert.
+                 Gemeten 2026-08-22 op een echte laptop: maak je tijdens OOBE een lokaal account
+                 MET wachtwoord, dan eist Windows daarna drie beveiligingsvragen. Zonder wachtwoord
+                 gebeurt dat niet.
+
+                 De policy die dit uitzet heet NoLocalPasswordResetQuestions (CredUI.admx,
+                 HKLM\SOFTWARE\Policies\Microsoft\Windows\System). Die zetten we bewust NA OOBE, in
+                 firstlogon.ps1 stap 0b. Hem in de specialize-pass hierboven zetten is precies het
+                 scenario waarvan gerapporteerd wordt dat de OOBE-accountpagina op Windows 11 24H2
+                 afbreekt met de OOBELOCAL-fout, en zelfs als het goed gaat wisselt OOBE de drie
+                 vragen alleen om voor een verplicht wachtwoord-hint-veld. Niet doen dus.
+
+                 Wil je het OOBE-accountscherm - en daarmee de vragen - helemaal kwijt, dan is er
+                 maar een betrouwbare route: laat het antwoordbestand het account aanmaken. Zet dan
+                 HideLocalAccountScreen hierboven op true en haal het blok hieronder uit commentaar.
+                 Prijs: de accountnaam ligt vast in de ISO in plaats van dat je hem tijdens setup
+                 intypt. Dat is de reden dat dit blok in commit f293b19 juist is weggehaald, dus het
+                 staat hier uit - klaar om aan te zetten als je die ruil wel wilt maken.
+
+                 LET OP bij <Password>: <PlainText>true</PlainText> zet het wachtwoord leesbaar in
+                 de ISO. Met <PlainText>false</PlainText> verwacht Windows de base64 van
+                 (wachtwoord + "Password") in UTF-16LE - dat is obfuscatie, geen versleuteling.
+                 Wil je geen wachtwoord in de ISO, laat <Password> dan weg: het account krijgt er
+                 geen, en dankzij de policy uit stap 0b kun je er na de eerste inlog zonder
+                 vragenlijst alsnog een instellen.
+
+            <UserAccounts>
+                <LocalAccounts>
+                    <LocalAccount wcm:action="add">
+                        <Name>Gebruiker</Name>
+                        <DisplayName>Gebruiker</DisplayName>
+                        <Description>Lokale beheerder</Description>
+                        <Group>Administrators</Group>
+                    </LocalAccount>
+                </LocalAccounts>
+            </UserAccounts>
+            -->
+
             <!-- Tijdzone -->
             <TimeZone>W. Europe Standard Time</TimeZone>
 
