@@ -15,3 +15,7 @@ out/
 setupact.log
 setuperr.log
 WindowsUpdate*.log
+
+# Driverpakketten van derden (zie drivers/README.md) - groot, binair, niet van ons
+drivers/*
+!drivers/README.md

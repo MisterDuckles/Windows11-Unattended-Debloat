@@ -19,7 +19,9 @@ shortcuts waiting the first time you sign in.
    ```
 
    Both parameters have defaults pointing at `Downloads\`; run it with no arguments if that
-   layout suits you.
+   layout suits you. It asks one question — whether to fetch touchpad drivers for Setup from
+   the Microsoft Update Catalog (Enter = yes; see
+   [Touchpad drivers](#touchpad-drivers-for-setup--touchpaddrivers--harvestinputdrivers-drivers)).
 4. Boot a VM (or real hardware) from the resulting ISO. No prompts — it installs, wipes the
    target disk, creates a local account, and lands on a debloated desktop.
 
@@ -150,6 +152,7 @@ The Windows Update gate removal never waits for any of this — it is step 0 and
 
 ```powershell
 .\build-helper.ps1 [-SourceIso <path>] [-OutputIso <path>] [-RefreshScripts]
+                   [-TouchpadDrivers Ask|Download|Skip] [-DriversDir <path>] [-HarvestInputDrivers]
 ```
 
 The script mounts the source ISO, copies its contents to a temp folder, injects
@@ -184,6 +187,112 @@ see [Security notes](#security-notes) for why that distinction matters.
 ```
 
 Always review `git diff` after using this flag before rolling out the resulting ISO.
+
+### Touchpad drivers for Setup (`-TouchpadDrivers`, `-HarvestInputDrivers`, `drivers\`)
+
+Windows Setup runs inside WinPE, and WinPE only has the drivers that are inside `boot.wim`.
+A modern precision touchpad is not a PS/2 or USB device — it hangs off the motherboard's I2C
+bus, so three layers have to be present before it works: the GPIO controller (interrupt line),
+the I2C controller (the bus), and `hidi2c` (the HID device itself).
+
+`hidi2c` is in the box. The controllers frequently are not. Measured against Windows 11 25H2
+(build 26200), by looking up which hardware IDs have an in-box INF:
+
+| Platform | In-box driver? |
+| --- | --- |
+| AMD (`ACPI\AMDI0010`, `ACPI\AMDI0030`) | yes — `amdi2c.inf`, `amdgpio2.inf` |
+| Intel up to Comet Lake / Gemini Lake | yes — `iaLPSS2i_*_SKL/BXT_P/CNL/GLK.inf` |
+| Intel Ice Lake (`DEV_34E8`) | **no** |
+| Intel Tiger Lake (`DEV_A0E8`) | **no** |
+| Intel Alder Lake (`DEV_51E8`, `DEV_7ACC`) | **no** |
+| Intel Raptor Lake (`DEV_51E9`) | **no** |
+| Intel Meteor Lake (`DEV_7E78`) | **no** |
+
+So on any Intel laptop from roughly 2020 onwards the touchpad is dead during Setup — you get
+to tab through the partition screen — unless the Intel Serial IO drivers ship with the media.
+It works fine *after* installation because Windows Update delivers them, and there is no
+Windows Update inside Setup.
+
+#### The automatic route: the build asks
+
+By default `build-helper.ps1` asks, right after the file checks and before the slow ISO copy:
+
+```
+[2b/5] Touchpad-drivers voor Windows Setup...
+    Touchpad-drivers ophalen en meebakken? (J/n)
+```
+
+Enter (or `j`) fetches the Intel Serial IO package for each generation from the **Microsoft
+Update Catalog** — the same place Windows Update gets them — into `drivers\IntelSerialIO\`, from
+where they follow the normal driver route below. Eight packages, about 2 MB, roughly 30 seconds.
+Covered: Ice Lake, Jasper Lake, Tiger Lake, Alder/Raptor Lake, Alder Lake-N, Meteor Lake /
+Arrow Lake-H, Lunar Lake and Panther Lake. Everything older, and AMD, is already in `boot.wim`.
+
+For scripted builds the question can be answered up front:
+
+```powershell
+.\build-helper.ps1 -TouchpadDrivers Download   # fetch without asking
+.\build-helper.ps1 -TouchpadDrivers Skip       # don't fetch; previously fetched packages still ship
+```
+
+Fetched packages are cached by generation and version. A rebuild re-checks the catalog (a few
+seconds), reuses what it has, and replaces a package only when a newer version exists — so two
+versions of the same driver never end up side by side in the ISO. No internet is not an error:
+the build warns and continues with whatever is already in `drivers\`.
+
+How the catalog is driven, and why this is less fragile than it sounds: each generation is
+looked up by one representative I2C controller hardware ID (e.g. `PCI\VEN_8086&DEV_A0E8` for
+Tiger Lake). The result rows are parsed for the version number in the title, the best candidate
+is confirmed on its details page to really be an AMD64 *Serial IO I2C* driver that lists that
+hardware ID (searching for Arrow Lake-S's ID surfaced the Integrated Sensor Hub driver first —
+that check exists because of it), the `.cab` is downloaded through `DownloadDialog.aspx`,
+expanded with `expand.exe`, and every `.cat` is checked for a valid Authenticode signature.
+Each `.cab` turned out to contain the *complete* Serial IO package for its generation — GPIO,
+I2C, SPI, UART — so one download per generation does it. INFs for generations that are already
+in-box (the Ice Lake package also carries Skylake INFs with identical hardware IDs) are removed
+before the package is used, for the KB2686316 reason explained below. Sorting the catalog's
+results server-side (an ASP.NET postback) is deliberately *not* used: it returned an error page,
+and it is exactly the kind of mechanism that breaks when Microsoft touches the site.
+
+#### The manual route: `drivers\`
+
+Drop unpacked driver packages (folders containing `.inf`/`.sys`/`.cat`; not `.exe` installers)
+into `drivers\` and `build-helper.ps1` puts them in two places, deliberately using the same
+files for both:
+
+1. **Injected into `boot.wim`** (the Setup image, via DISM). This is the one that makes the
+   touchpad work on the partition screen, because WinPE loads its drivers at boot — before
+   `setup.exe` even starts.
+2. **Copied to `$WinPEDriver$` at the ISO root.** Setup scans that folder on every drive letter
+   from C: upwards and also schedules those drivers into the Windows being installed.
+
+Using the *same* files for both routes is not laziness. Microsoft's KB2686316 warns that if the
+two routes carry *different versions* of the same driver, the one WinPE already has in memory
+wins and the other gets flagged as a bad driver and ignored from then on — even when it is
+newer. The same logic is why the catalog route strips INFs for in-box generations.
+
+This is also where anything else Setup might need goes — Intel RST/VMD storage drivers when the
+disk doesn't show up, a vendor touchpad driver for an exotic model.
+
+If you're building the ISO on a machine of the same generation as the target laptop, there is a
+third option:
+
+```powershell
+.\build-helper.ps1 -HarvestInputDrivers
+```
+
+That exports the build machine's own I2C, GPIO, HID, mouse and keyboard driver packages
+(`pnputil /export-driver`, only out-of-box `oem*.inf` ones — in-box drivers are already in
+`boot.wim`) and adds them to whatever is in `drivers\`. It only helps when the hardware is
+comparable: an AMD build machine cannot produce an Intel Serial IO driver.
+
+The build reports what it did. With no drivers present it warns rather than fails — on AMD and
+older Intel the in-box stack is enough — but it says so on both the driver step and the final
+summary line, so an ISO without drivers never looks the same as one with them. The summary
+reports the number of packages *measured inside `boot.wim` after injection*, not the number
+offered, so a package DISM rejected shows up as a lower count.
+
+`drivers\` contents are gitignored; only its `README.md` is tracked.
 
 ## Security notes
 
@@ -264,6 +373,12 @@ to step 0b, nobody asks you anything.
 - **Security questions cannot be removed from the OOBE screen itself** without giving up
   interactive account creation — see [above](#security-questions-on-the-oobe-account-screen).
   They are gone everywhere else on the finished machine.
+- **Setup drivers are not shipped in this repo; they are fetched at build time.** `drivers\` is
+  empty in git — third-party driver binaries don't belong in a repo — and the build asks
+  whether to pull the Intel Serial IO packages from the Microsoft Update Catalog (see
+  [above](#touchpad-drivers-for-setup--touchpaddrivers--harvestinputdrivers-drivers)). Answer
+  no, or build offline with nothing cached, and Intel laptops from 2020 onwards still have a
+  dead touchpad during Setup. The build says so when that happens.
 - **No automated test suite.** Every change here should be validated with a real install in a
   VM. `%USERPROFILE%\debloat-firstlogon.log` (user-context steps) and
   `%WINDIR%\Panther\debloat.log` (SYSTEM-context steps, captured by `SetupComplete.cmd`) are
@@ -278,6 +393,7 @@ to step 0b, nobody asks you anything.
 ```
 autounattend.xml                          Answer file: disk setup, OOBE config, WU gate
 build-helper.ps1                          ISO builder (mount, inject, repack, validate)
+drivers/                                  Drop setup drivers here (gitignored; see its README)
 sources/$OEM$/$$/Setup/Scripts/
     SetupComplete.cmd                     Entry point, runs as SYSTEM before OOBE
     launcher.ps1                          Runs the staged debloat.ps1
